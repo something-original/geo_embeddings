@@ -1,3 +1,9 @@
 [submodule "TabPFN"]
 	path = models/TabPFN
 	url = https://github.com/PriorLabs/TabPFN
+[submodule "satclip"]
+	path = satclip
+	url = https://github.com/microsoft/satclip.git
+[submodule "geo-clip"]
+	path = geo-clip
+	url = https://github.com/VicenteVivan/geo-clip.git
