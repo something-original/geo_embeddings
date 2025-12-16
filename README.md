@@ -2,6 +2,27 @@
 
 Мультимодальные векторные представления географических локаций для многопрофильных downstream задач.
 
+## 📊 Структура таблицы результатов бенчмарка
+
+| Задача (таргет) | Модель эмбеддингов | Фичи | ML-модель | Метрика | Улучшение |
+|-----------------|-------------------|------|-----------|---------|-----------|
+| Price           | None (baseline)  | Original | CatBoost | X.XXX | - |
+| Price           | EfficientNet     | Original + Emb | CatBoost | X.XXX | +Y% |
+| Price           | TabPFN           | Original + Emb | CatBoost | X.XXX | +Y% |
+| Price           | GNN              | Original + Emb | CatBoost | X.XXX | +Y% |
+| Price           | GeoCLIP          | Original + Emb | CatBoost | X.XXX | +Y% |
+| Price           | S2Vec            | Original + Emb | CatBoost | X.XXX | +Y% |
+| Price           | SatCLIP          | Original + Emb | CatBoost | X.XXX | +Y% |
+| AverageBill     | None (baseline)  | Original | CatBoost | X.XXX | - |
+| AverageBill     | EfficientNet     | Original + Emb | CatBoost | X.XXX | +Y% |
+| ...             | ...              | ... | ... | ... | ... |
+
+**Примечание:** 
+- **Original** - оригинальные табличные фичи
+- **Original + Emb** - оригинальные фичи + эмбеддинги модели
+- Метрики: RMSE, R², MAPE
+- Улучшение рассчитывается относительно baseline
+
 ## 🔍 Кратко о проекте
 
 Проект нацелен на создание универсальных эмбеддингов географических точек путем объединения:
