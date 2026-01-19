@@ -6,6 +6,7 @@ from sklearn.model_selection import train_test_split, cross_val_score, Stratifie
 from catboost import CatBoostRegressor
 from tabpfn import TabPFNRegressor
 
+
 def main():
     folder_path = 'map_embeds/maps_emb_msc'
     embeddings_dict = {}
