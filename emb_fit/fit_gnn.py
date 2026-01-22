@@ -3,11 +3,18 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import os
+import sys
 
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 from sklearn.neighbors import kneighbors_graph
 from torch_geometric.data import Data
+
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from models.GNN.deep_gnn import DeepGNN
 from utils import load_dataset
 
@@ -214,6 +221,32 @@ def get_gnn_embeddings(
 
 if __name__ == '__main__':
     root_dir = Path(__file__).resolve().parent.parent
-    X = load_dataset(Path(os.path.join(root_dir, 'datasets/spb_merged.csv')))
-    debug = 1
-    print('ok')
+    df_spb = load_dataset(Path(os.path.join(root_dir, 'datasets/spb_merged.csv')))
+    df_msk = load_dataset(Path(os.path.join(root_dir, 'datasets/moscow_merged.csv')))
+    df_ekb = load_dataset(Path(os.path.join(root_dir, 'datasets/ekb_merged.csv')))
+
+    cols = df_spb.columns
+    df_ekb = df_ekb[[col for col in cols if col in df_ekb.columns]]
+    df_msk = df_msk[[col for col in cols if col in df_msk.columns]]
+    df = pd.concat([df_spb, df_ekb, df_msk], axis=0)
+
+    feature_start_index = df.columns.get_loc('mun_district')
+
+    X = df.iloc[:, feature_start_index + 1:]
+    y = df['price']
+
+    X = X.reset_index().drop(columns=['index'])
+    y = y.reset_index().drop(columns=['index'])
+
+    X = X.dropna()
+    y = y[y.index.isin(X.index)]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, shuffle=True, random_state=42, train_size=0.7
+    )
+
+    model, scaler = train_gnn(X_train, y_train['price'], X_test, y_test['price'])
+    gnn_embs = get_gnn_embeddings(model, X_test)
+
+    np.save(os.path.join(root_dir, 'emb_fit/gnn/gnn_embs.npy'), gnn_embs)
+    np.save(os.path.join(root_dir, 'emb_fit/x_test_index.npy'), X_test.index.to_numpy())
