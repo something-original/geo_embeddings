@@ -8,8 +8,11 @@ SatCLIP - это модель, которая обучается сопоста�
 
 import numpy as np
 import torch
+import pandas as pd
+import os
 from pathlib import Path
 from typing import Union, List, Tuple
+from tqdm import tqdm
 import sys
 
 # Добавляем путь к satclip модулю
@@ -17,6 +20,7 @@ project_root = Path(__file__).resolve().parent.parent
 satclip_path = project_root / 'models' / 'satclip' / 'satclip'
 if str(satclip_path) not in sys.path:
     sys.path.insert(0, str(satclip_path))
+from utils import load_dataset
 
 try:
     from huggingface_hub import hf_hub_download
@@ -64,6 +68,7 @@ def get_satclip_embeddings(
     """
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f'Device: {device}')
 
     device = torch.device(device)
 
@@ -129,7 +134,7 @@ def get_satclip_embeddings(
 
     print(f"Генерируем эмбеддинги батчами по {batch_size} координат...")
     with torch.no_grad():
-        for i in range(0, n_samples, batch_size):
+        for i in tqdm(range(0, n_samples, batch_size)):
             batch_coords = coords_tensor[i:i + batch_size]
             batch_embeddings = location_encoder(batch_coords)
             embeddings_list.append(batch_embeddings.cpu().numpy())
@@ -149,5 +154,18 @@ def get_satclip_embeddings(
 
     return embeddings
 
+
 if __name__ == '__main__':
-    print('ok')
+    root_dir = Path(__file__).resolve().parent.parent
+    df_spb = load_dataset(Path(os.path.join(root_dir, 'datasets/spb_merged.csv')))
+    df_msk = load_dataset(Path(os.path.join(root_dir, 'datasets/moscow_merged.csv')))
+    df_ekb = load_dataset(Path(os.path.join(root_dir, 'datasets/ekb_merged.csv')))
+
+    cols = df_spb.columns
+    df_ekb = df_ekb[[col for col in cols if col in df_ekb.columns]]
+    df_msk = df_msk[[col for col in cols if col in df_msk.columns]]
+    df = pd.concat([df_spb, df_ekb, df_msk], axis=0)
+
+    coord_list = [(lat, lon,) for lat, lon in zip(df.lat, df.lng)]
+
+    get_satclip_embeddings(coord_list, output_path='satclip/satclip_embs.npy')
