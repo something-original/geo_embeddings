@@ -8,9 +8,10 @@ from dotenv import load_dotenv
 
 async def download_all_files(base_download_url, mun_datasets_df):
     tasks = []
+    timeout = aiohttp.ClientTimeout(total=600)
     semaphore = asyncio.Semaphore(10)
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         for section_id, dataset_code in zip(
             mun_datasets_df['Код раздела'],
             mun_datasets_df['Код показателя']
