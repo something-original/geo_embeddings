@@ -7,8 +7,9 @@ from zipfile import ZipFile
 
 
 def main():
+
     load_dotenv()
-    root_dir = Path(__file__).resolve().parent.parent.parent
+    root_dir = Path(__file__).resolve().parents[2]
     save_path = os.path.join(root_dir, "datasets", "raw_mun_data")
     os.makedirs(save_path, exist_ok=True)
 
