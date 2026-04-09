@@ -302,5 +302,7 @@ def parse_mun_data(root_dir):
 
 
 if __name__ == '__main__':
+    
+    #TODO: написать обработку с папкой parts (пример 8112021.zip)
     root_dir = Path(__file__).resolve().parents[2]
     parse_mun_data(root_dir)
