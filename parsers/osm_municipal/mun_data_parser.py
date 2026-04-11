@@ -97,7 +97,7 @@ class FeatureStore:
             vals = [k[i] for k in new_keys]
             m = pl.col(c).is_in(vals)
             mask = m if mask is None else mask & m
-        new_df = df.filter(mask).select(self.columns)
+        new_df = df.filter(mask).select(df.columns)
 
         if merge_dfs and merge_specs:
             for i, mdf in enumerate(merge_dfs):
@@ -155,7 +155,7 @@ def parse_mun_data(root_dir):
         logger.info("Not downloading files")
 
     regions_store = FeatureStore("regions", ["id", "name"], "name")
-    municipalities_store = FeatureStore("municipalities", ["id", "region_id", "name"], "name")
+    municipalities_store = FeatureStore("municipalities", ["id", "region_id", "name"], ["region_id", "name"])
     units_store = FeatureStore("units", ["id", "name"], "name")
     base_indicators_store = FeatureStore("base_indicators", ["id", "name", "unit_id"], ["name", "unit_id"])
     indicators_store = FeatureStore("indicators", ["id", "code", "name"], "code")
@@ -192,7 +192,7 @@ def parse_mun_data(root_dir):
             df = pl.read_excel(os.path.join(folder_path, file_name_xlsx))
         except Exception:
             try:
-                df = pl.scan_csv(os.path.join(folder_path, file_name_xlsx.replace(".xlsx", ".csv")), separator=";").collect()
+                df = pl.scan_csv(os.path.join(folder_path, file_name_xlsx.replace(".xlsx", ".csv")), separator=";", ignore_errors=True).collect()
             except Exception:
                 dfs_folder = os.path.join(folder_path, parts_folder)
                 if os.path.isdir(dfs_folder):
@@ -206,7 +206,7 @@ def parse_mun_data(root_dir):
         cols_to_drop = [
             "indicator_section_code", "indicator_section", "indicator_period",
             "oktmo_stable", "oktmo_history", "oktmo_year_from", "oktmo_year_to",
-            "mun_type", "mun_type_oktmo", "comment", "mun_level", "oktmo"
+            "mun_type", "mun_type_oktmo", "comment", "mun_level", "oktmo", "region_id"
         ]
         df = df.drop([c for c in cols_to_drop if c in df.columns])
 
@@ -216,13 +216,16 @@ def parse_mun_data(root_dir):
         unit_df = df.select(pl.col("indicator_unit").alias("name")).unique()
         units_store.preprocess_feature(unit_df)
 
-        mun_df = df.filter(pl.col("municipality") != pl.col("mun_district")) \
-                   .select(pl.col("municipality").alias("name")) \
-                   .unique()
+        mun_df = df.with_columns(pl.col("municipality").n_unique().over(["region_name", "mun_district"]).alias("n_mun"))\
+            .filter((pl.col("n_mun") == 1) | (pl.col("municipality") != pl.col("mun_district")))\
+            .select(pl.col("municipality").alias("name"), pl.col("region_name")).unique()
+
+        mun_df = mun_df.join(regions_store.finalize(), how='left', left_on='region_name', right_on='name')\
+            .drop('region_name').rename({'id': 'region_id'})
         municipalities_store.preprocess_feature(mun_df)
 
         base_cols = [
-            "region_id", "region_name", "municipality", "mun_district",
+            "region_name", "municipality", "mun_district",
             "indicator_code", "indicator_name", "indicator_unit", "indicator_value",
             "year"
         ]
@@ -243,7 +246,7 @@ def parse_mun_data(root_dir):
         ind_construct_df = df.select("indicator_name", "indicator_unit", *special_cols) \
                              .unique()
         ind_construct_df = ind_construct_df.join(base_indicators_store.finalize(), left_on="indicator_name", right_on="name", how="left")
-        ind_construct_df = ind_construct_df.drop("name")
+        ind_construct_df = ind_construct_df.drop("indicator_unit")
 
         merge_list = []
         merge_specs = []
@@ -255,18 +258,12 @@ def parse_mun_data(root_dir):
                 merge_specs.append({"left_on": sc, "right_on": "name"})
 
         if merge_list:
-            ind_construct_df = ind_construct_df.join(
-                pl.concat(merge_list, how="diagonal"),
-                left_on=[m["left_on"] for m in merge_specs],
-                right_on=[m["right_on"] for m in merge_specs],
-                how="left"
-            )
-
-        for sc in special_cols:
-            if f"{sc}_right" in ind_construct_df.columns:
-                ind_construct_df = ind_construct_df.drop([sc, f"{sc}_right"])
-            elif sc in ind_construct_df.columns:
-                ind_construct_df = ind_construct_df.drop(sc)
+            for merge_df, merge_spec, spec_col in zip(merge_list, merge_specs, special_cols):
+                ind_construct_df = ind_construct_df.join(
+                    merge_df,
+                    how="left",
+                    **merge_spec
+                ).drop(spec_col).rename({"id_right": f"{spec_col}_id"})
 
         base_final = base_indicators_store.finalize()
         if "indicator_name" in ind_construct_df.columns and "id" in base_final.columns:
@@ -276,89 +273,91 @@ def parse_mun_data(root_dir):
                 right_on="name",
                 how="left",
                 suffix="_base"
-            )
+            ).rename({"id_base": "base_id"})
+            ind_construct_df = ind_construct_df.drop("indicator_name")
 
         if special_cols:
             code_expr = pl.lit("ind") + pl.col("id").cast(pl.String)
-            name_expr = pl.col("indicator_name").fill_null(pl.col("name_base")).cast(pl.String)
-            for sc in special_cols:
-                id_col = f"{sc}_id_right" if f"{sc}_id_right" in ind_construct_df.columns else f"id_{sc}"
-                if id_col in ind_construct_df.columns:
-                    code_expr = code_expr + pl.lit(f"_{sc}_") + pl.col(id_col).cast(pl.String)
-                    name_expr = name_expr + pl.lit(" (") + pl.col(
-                        f"{sc}_right" if f"{sc}_right" in ind_construct_df.columns else sc
-                    ).cast(pl.String) + pl.lit(")")
 
-            ind_construct_df = ind_construct_df.with_columns(code_expr.alias("code"), name_expr.alias("final_name"))
+            for sc in special_cols:
+                id_col = f"{sc}_id"
+                if id_col in ind_construct_df.columns:
+                    code_expr = code_expr + pl.lit(f"_{sc}") + pl.col(id_col).cast(pl.String)
+
+            ind_construct_df = ind_construct_df.with_columns(code_expr.alias("code"))
+            for sc in special_cols:
+                ind_construct_df = ind_construct_df.drop(f"{sc}_id")
         else:
             ind_construct_df = ind_construct_df.with_columns(
-                pl.lit("ind") + pl.col("id").cast(pl.String).alias("code"),
-                pl.col("indicator_name").fill_null(pl.col("name_base")).alias("final_name")
+                pl.lit("ind") + pl.col("base_id").cast(pl.String).alias("code")
             )
 
-        ind_construct_df = ind_construct_df.select(pl.col("id").alias("base_id"), "code", "final_name").unique()
-        indicators_store.preprocess_feature(ind_construct_df.select("code", pl.col("final_name").alias("name"), pl.col("base_id")))
+        ind_construct_df = ind_construct_df.drop(["id", "unit_id"])
+        ind_construct_df = ind_construct_df.select("code").unique()
+        indicators_store.preprocess_feature(ind_construct_df.select("code"))
 
-        values_df = df.select("municipality", "indicator_name", "indicator_unit", "indicator_value", *special_cols)
+        values_df = df.select("municipality", "region_name", "indicator_name", "indicator_value", "year", *special_cols)
+
+        values_df = values_df.join(
+            regions_store.finalize(),
+            how='left',
+            left_on='region_name',
+            right_on='name'
+        ).drop('region_name').rename({'id': 'region_id'})
+
         values_df = values_df.join(
             municipalities_store.finalize(),
-            left_on="municipality",
-            right_on="name",
-            how="left"
-        )
-        values_df = values_df.drop(["municipality", "name"])
+            left_on=["municipality", "region_id"],
+            right_on=["name", "region_id"],
+            how="right"
+        ).drop("name", "region_id").rename({'id': 'municipality_id'})
+
         values_df = values_df.join(
             base_final,
-            left_on=["indicator_name", "indicator_unit"],
-            right_on=["name", "unit_id"],
-            how="left",
-            suffix="_base"
-        )
-        values_df = values_df.drop(["indicator_name", "indicator_unit", "name", "unit_id_base"])
+            left_on="indicator_name",
+            right_on="name",
+            how="left"
+        ).rename({"id": "base_id"})
+        values_df = values_df.drop(["indicator_name", "name", "unit_id"], strict=False)
 
         if special_cols:
-            merge_list_v = []
-            merge_specs_v = []
+            merge_list = []
+            merge_specs = []
+
             for sc in special_cols:
                 s = special_stores[sc].finalize()
                 if not s.is_empty():
-                    merge_list_v.append(s)
-                    merge_specs_v.append({"left_on": sc, "right_on": "name"})
-            if merge_list_v:
+                    merge_list.append(s)
+                    merge_specs.append({"left_on": sc, "right_on": "name"})               
+
+            for merge_df, merge_spec, spec_col in zip(merge_list, merge_specs, special_cols):
                 values_df = values_df.join(
-                    pl.concat(merge_list_v, how="diagonal"),
-                    left_on=[m["left_on"] for m in merge_specs_v],
-                    right_on=[m["right_on"] for m in merge_specs_v],
-                    how="left"
-                )
+                    merge_df,
+                    how="left",
+                    **merge_spec                    
+                ).drop(spec_col).rename({"id_right": f"{spec_col}_id", "id": f"{spec_col}_id"}, strict=False)
+
+            if "base_id" in values_df.columns:
+                code_expr = pl.lit("ind") + pl.col("base_id").cast(pl.String)
+                for sc in special_cols:
+                    id_c = f"{sc}_id"
+                    if id_c in values_df.columns:
+                        code_expr = code_expr + pl.lit(f"_{sc}") + pl.col(id_c).cast(pl.String)
+                values_df = values_df.with_columns(code_expr.alias("indicator_code"))
 
             for sc in special_cols:
-                id_c = f"{sc}_id_right" if f"{sc}_id_right" in values_df.columns else f"id_{sc}"
-                if id_c in values_df.columns and sc in values_df.columns:
-                    values_df = values_df.drop([sc, id_c, f"{sc}_right" if f"{sc}_right" in values_df.columns else sc])
-
-            if "id_base" in values_df.columns:
-                code_expr = pl.lit("ind") + pl.col("id_base").cast(pl.String)
-                for sc in special_cols:
-                    id_c = f"{sc}_id_right" if f"{sc}_id_right" in values_df.columns else f"id_{sc}"
-                    if id_c in values_df.columns:
-                        code_expr = code_expr + pl.lit(f"_{sc}_") + pl.col(id_c).cast(pl.String)
-                values_df = values_df.with_columns(code_expr.alias("indicator_code"))
+                values_df = values_df.drop(f"{sc}_id", strict=False)
         else:
-            values_df = values_df.with_columns(pl.lit("ind") + pl.col("id_base").cast(pl.String).alias("indicator_code"))
+            values_df = values_df.with_columns(pl.lit("ind") + pl.col("base_id").cast(pl.String).alias("indicator_code"))
 
-        values_df = values_df.join(
-            indicators_store.finalize().select("code", "id"),
-            left_on="indicator_code",
-            right_on="code",
-            how="left",
-            suffix="_ind"
-        )
+        values_df = values_df.drop("base_id")
+        values_df = values_df.filter(pl.col("year") == pl.col("year").max().over(["indicator_code", "municipality_id"]))\
+            .drop("year").pivot(values="indicator_value", index="municipality_id", on="indicator_code", aggregate_function="first")
 
-        values_df = values_df.select("id_right", "indicator_code", "indicator_value").rename({"id_right": "municipality_id"})
-        values_df = values_df.drop_nulls(subset=["indicator_value"])
         indicator_values_store.preprocess_feature(values_df)
 
+
+        #finalize for values_store
         for ef in extracted_files:
             if os.path.isdir(ef):
                 try:
