@@ -63,14 +63,17 @@ def download_mun_data(root_dir):
 
 
 class FeatureStore:
-    def __init__(self, name, columns, unique_column_name, use_tempfile=False):
+    def __init__(self, name, columns, unique_column_name, use_tempfile=True):
         self.name = name
         self.columns = columns
         self.unique_column_name = unique_column_name
         self.unique_column_values = set()
         self.dfs = []
         self.use_tempfile = use_tempfile
-        self.temp_dir = tempfile.TemporaryDirectory(prefix=f"store_{name}_") if use_tempfile else None
+        if self.use_tempfile:
+            self.temp_dir = tempfile.TemporaryDirectory(prefix=f"store_{name}")
+        else:
+            self.use_tempfile = None
         self.next_id = 1
 
     def preprocess_feature(
@@ -144,6 +147,63 @@ class FeatureStore:
         return self._get_current_df()
 
 
+class IndicatorFeatureStore:
+    def __init__(self, key_column: str, use_tempfile: bool = True):
+        self.name = "indicator_values"
+        self.key_column = key_column
+        self.frames: list[pl.DataFrame] = []
+        self.all_keys = set()
+        self.use_tempfile = use_tempfile
+        self.temp_dir: Optional[tempfile.TemporaryDirectory] = None
+        self.saved_paths: list[str] = []
+        self.next_id = 1
+
+        if self.use_tempfile:
+            self.temp_dir = tempfile.TemporaryDirectory(prefix=f"store_{self.name}_")
+
+    def update(self, value: pl.DataFrame) -> None:
+        current_keys = set(value[self.key_column].to_list())
+        self.all_keys.update(current_keys)
+
+        if self.use_tempfile and self.temp_dir:
+            path = os.path.join(self.temp_dir.name, f"{self.next_id}.parquet")
+            value.write_parquet(path)
+            self.saved_paths.append(path)
+            self.next_id += 1
+        else:
+            self.frames.append(value)
+
+    def finalize(self) -> pl.DataFrame:
+        if not self.all_keys:
+            return pl.DataFrame()
+
+        master_df = pl.DataFrame({self.key_column: list(self.all_keys)})
+
+        if self.use_tempfile:
+            if not self.saved_paths:
+                return master_df
+            
+            result_df = master_df
+            for path in self.saved_paths:
+                df = pl.read_parquet(path)
+                result_df = result_df.join(df, on=self.key_column, how="left")
+    
+        else:
+            if not self.frames:
+                return master_df
+            
+            result_df = master_df
+            for df in self.frames:
+                result_df = result_df.join(df, on=self.key_column, how="left")
+
+        result_df = result_df.sort(self.key_column)
+        
+        if self.use_tempfile and self.temp_dir:
+            self.temp_dir.cleanup()
+            
+        return result_df
+
+
 def parse_mun_data(root_dir):
     logger.info("Start")
 
@@ -159,12 +219,7 @@ def parse_mun_data(root_dir):
     units_store = FeatureStore("units", ["id", "name"], "name")
     base_indicators_store = FeatureStore("base_indicators", ["id", "name", "unit_id"], ["name", "unit_id"])
     indicators_store = FeatureStore("indicators", ["id", "code", "name"], "code")
-    indicator_values_store = FeatureStore(
-        "indicator_values",
-        ["municipality_id", "code", "value"],
-        ["municipality_id", "code"],
-        use_tempfile=True
-    )
+    indicator_values_store = IndicatorFeatureStore('municipality_id')
 
     special_stores = {}
 
@@ -289,7 +344,7 @@ def parse_mun_data(root_dir):
                 ind_construct_df = ind_construct_df.drop(f"{sc}_id")
         else:
             ind_construct_df = ind_construct_df.with_columns(
-                pl.lit("ind") + pl.col("base_id").cast(pl.String).alias("code")
+                (pl.lit("ind") + pl.col("base_id").cast(pl.String)).alias("code")
             )
 
         ind_construct_df = ind_construct_df.drop(["id", "unit_id"])
@@ -348,13 +403,13 @@ def parse_mun_data(root_dir):
             for sc in special_cols:
                 values_df = values_df.drop(f"{sc}_id", strict=False)
         else:
-            values_df = values_df.with_columns(pl.lit("ind") + pl.col("base_id").cast(pl.String).alias("indicator_code"))
+            values_df = values_df.with_columns((pl.lit("ind") + pl.col("base_id").cast(pl.String)).alias("indicator_code"))
 
         values_df = values_df.drop("base_id")
         values_df = values_df.filter(pl.col("year") == pl.col("year").max().over(["indicator_code", "municipality_id"]))\
             .drop("year").pivot(values="indicator_value", index="municipality_id", on="indicator_code", aggregate_function="first")
 
-        indicator_values_store.preprocess_feature(values_df)
+        indicator_values_store.update(values_df)
 
 
         #finalize for values_store
@@ -382,21 +437,22 @@ def parse_mun_data(root_dir):
             except FileNotFoundError:
                 pass
 
+    write_settings = {"separator": ";", "include_header": True, "encoding": "utf-8"}
+
     for name, store in {
         "regions": regions_store,
         "municipalities": municipalities_store,
         "units": units_store,
         "base_indicators": base_indicators_store,
-        "indicators": indicators_store
+        "indicators": indicators_store,
+        **special_stores
     }.items():
         final = store.finalize()
         if not final.is_empty():
-            final.write_csv(os.path.join(folder_path, f"{name}.csv"), separator=";", include_header=True)
+            final.write_csv(os.path.join(folder_path, f"{name}.csv"), **write_settings)
 
     final_vals = indicator_values_store.finalize()
-    if not final_vals.is_empty():
-        wide = final_vals.pivot(index="municipality_id", columns="code", values="value", aggregate_function="first")
-        wide.write_csv(os.path.join(folder_path, "indicator_values.csv"), separator=";", include_header=True)
+    final_vals.write_csv(os.path.join(folder_path, "indicator_values.csv"), **write_settings)
 
     logger.info("Processing complete.")
 
