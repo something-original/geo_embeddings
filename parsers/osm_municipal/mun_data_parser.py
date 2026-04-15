@@ -227,6 +227,7 @@ def parse_mun_data(root_dir):
 
     for zf_name in tqdm(zip_files, desc="Processing files"):
 
+        print(zf_name)
         full_path = os.path.join(folder_path, zf_name)
         base_name = os.path.splitext(zf_name)[0]
         file_name_xlsx = f"data_Y4{base_name}_112_v20250918.xlsx"
@@ -253,10 +254,22 @@ def parse_mun_data(root_dir):
                 if os.path.isdir(dfs_folder):
                     files = glob.glob(os.path.join(dfs_folder, "*.parquet"))
                     if files:
-                        df = pl.scan_parquet(files).collect()
+                        basenames = [os.path.basename(f).lower() for f in files]
+                        files_with_region = [f for f, name in zip(files, basenames) if 'region' in name]
+                        files_without_region_or_year = [
+                            f for f, name in zip(files, basenames) if 'region' not in name and 'year' not in name
+                        ]
+
+                        if not files_without_region_or_year and files_with_region:
+                            df = pl.scan_parquet(files_with_region).collect()
+                        else:
+                            df = pl.scan_parquet(files).collect()
 
         if df is None or df.is_empty():
             continue
+
+        if df['year'].max() >= 2020:
+            df = df.filter(pl.col("year") >= 2020).select(df.columns)
 
         cols_to_drop = [
             "indicator_section_code", "indicator_section", "indicator_period",
@@ -437,7 +450,7 @@ def parse_mun_data(root_dir):
             except FileNotFoundError:
                 pass
 
-    write_settings = {"separator": ";", "include_header": True, "encoding": "utf-8"}
+    write_settings = {"separator": ";", "include_header": True}
 
     for name, store in {
         "regions": regions_store,
