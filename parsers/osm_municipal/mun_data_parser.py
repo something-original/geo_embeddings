@@ -424,8 +424,6 @@ def parse_mun_data(root_dir):
 
         indicator_values_store.update(values_df)
 
-
-        #finalize for values_store
         for ef in extracted_files:
             if os.path.isdir(ef):
                 try:
@@ -450,6 +448,8 @@ def parse_mun_data(root_dir):
             except FileNotFoundError:
                 pass
 
+        os.remove(full_path)
+
     write_settings = {"separator": ";", "include_header": True}
 
     for name, store in {
@@ -461,6 +461,9 @@ def parse_mun_data(root_dir):
         **special_stores
     }.items():
         final = store.finalize()
+        other_cols = [col for col in final.columns if col != "id"]
+        final = final.select(["id"] + other_cols)
+
         if not final.is_empty():
             final.write_csv(os.path.join(folder_path, f"{name}.csv"), **write_settings)
 
