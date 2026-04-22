@@ -31,16 +31,10 @@ def main():
 
     path_parts = [root_dir, 'datasets', 'mun_data']
     mun_districts_df_path = os.path.join(*path_parts, 'municipalities.csv')
-    regions_df_path = os.path.join(*path_parts, 'regions.csv')
 
     df_attrs = {'sep': ';', 'encoding': 'utf-8'}
-    
-    mun_districts_df = pd.read_csv(mun_districts_df_path, **df_attrs)
-    regions_df = pd.read_csv(regions_df_path, **df_attrs)
 
-    mun_districts_df = mun_districts_df.merge(
-        regions_df, how='left', left_on='region_id', right_on='id', suffixes=('_mun', '_reg')
-    ).drop(columns=['id_mun', 'region_id', 'id_reg'])
+    mun_districts_df = pd.read_csv(mun_districts_df_path, **df_attrs)
 
     save_folder = Path(*path_parts)
     save_path = os.path.join(*path_parts, 'mun_data_geom.rar')
