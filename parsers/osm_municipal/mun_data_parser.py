@@ -182,40 +182,41 @@ class IndicatorFeatureStore:
         if self.use_tempfile:
             if not self.saved_paths:
                 return master_df
-            
+
             result_df = master_df
             for path in self.saved_paths:
                 df = pl.read_parquet(path)
                 result_df = result_df.join(df, on=self.key_column, how="left")
-    
+
         else:
             if not self.frames:
                 return master_df
-            
+
             result_df = master_df
             for df in self.frames:
                 result_df = result_df.join(df, on=self.key_column, how="left")
 
         result_df = result_df.sort(self.key_column)
-        
+
         if self.use_tempfile and self.temp_dir:
             self.temp_dir.cleanup()
-            
+
         return result_df
 
 
 def parse_mun_data(root_dir):
     logger.info("Start")
 
-    folder_path = os.path.join(root_dir, "datasets", "mun_data")
-    if not os.listdir(folder_path):
+    folder_path = Path(os.path.join(root_dir, "datasets", "mun_data"))
+
+    if not list(folder_path.glob("*.zip")):
         logger.info("Downloading files")
         download_mun_data(root_dir)
     else:
         logger.info("Not downloading files")
 
     regions_store = FeatureStore("regions", ["id", "name"], "name")
-    municipalities_store = FeatureStore("municipalities", ["id", "region_id", "name"], ["region_id", "name"])
+    municipalities_store = FeatureStore("municipalities", ["id", "region_id", "name", "oktmo"], ["oktmo"])
     units_store = FeatureStore("units", ["id", "name"], "name")
     base_indicators_store = FeatureStore("base_indicators", ["id", "name", "unit_id"], ["name", "unit_id"])
     indicators_store = FeatureStore("indicators", ["id", "code", "name"], "code")
@@ -245,10 +246,18 @@ def parse_mun_data(root_dir):
 
         df = None
         try:
-            df = pl.read_excel(os.path.join(folder_path, file_name_xlsx))
+            df = pl.read_excel(
+                os.path.join(folder_path, file_name_xlsx),
+                schema_overrides={"oktmo_stable": pl.Utf8}
+            )
         except Exception:
             try:
-                df = pl.scan_csv(os.path.join(folder_path, file_name_xlsx.replace(".xlsx", ".csv")), separator=";", ignore_errors=True).collect()
+                df = pl.scan_csv(
+                    os.path.join(folder_path, file_name_xlsx.replace(".xlsx", ".csv")),
+                    separator=";",
+                    ignore_errors=True,
+                    dtypes={"oktmo_stable": pl.Utf8}
+                ).collect()
             except Exception:
                 dfs_folder = os.path.join(folder_path, parts_folder)
                 if os.path.isdir(dfs_folder):
@@ -268,13 +277,14 @@ def parse_mun_data(root_dir):
         if df is None or df.is_empty():
             continue
 
+        df = df.with_columns(pl.col("oktmo_stable").cast(pl.Utf8))
         if df['year'].max() >= 2020:
             df = df.filter(pl.col("year") >= 2020).select(df.columns)
 
         cols_to_drop = [
             "indicator_section_code", "indicator_section", "indicator_period",
-            "oktmo_stable", "oktmo_history", "oktmo_year_from", "oktmo_year_to",
-            "mun_type", "mun_type_oktmo", "comment", "mun_level", "oktmo", "region_id"
+            "oktmo_history", "oktmo_year_from", "oktmo_year_to", "mun_type",
+            "mun_type_oktmo", "comment", "mun_level", "oktmo", "region_id"
         ]
         df = df.drop([c for c in cols_to_drop if c in df.columns])
 
@@ -284,14 +294,17 @@ def parse_mun_data(root_dir):
         unit_df = df.select(pl.col("indicator_unit").alias("name")).unique()
         units_store.preprocess_feature(unit_df)
 
-        mun_df = df.with_columns(pl.col("municipality").n_unique().over(["region_name", "mun_district"]).alias("n_mun"))\
-            .filter((pl.col("n_mun") == 1) | (pl.col("municipality") != pl.col("mun_district")))\
-            .select(pl.col("municipality").alias("name"), pl.col("region_name")).unique()
+        mun_df = df.select(
+            pl.col("mun_district").alias("name"),
+            pl.col("region_name"),
+            pl.col("oktmo_stable").alias("oktmo")
+        ).unique()
 
         mun_df = mun_df.join(regions_store.finalize(), how='left', left_on='region_name', right_on='name')\
             .drop('region_name').rename({'id': 'region_id'})
         municipalities_store.preprocess_feature(mun_df)
 
+        df = df.drop(['oktmo_stable'])
         base_cols = [
             "region_name", "municipality", "mun_district",
             "indicator_code", "indicator_name", "indicator_unit", "indicator_value",
