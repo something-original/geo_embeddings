@@ -319,15 +319,12 @@ class S2VecModel(Model):
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: The reconstructed tensor,
             the target tensor, and the mask.
         """
-        print(inputs.shape)
+
         latent, mask, ids_restore = self.encode(inputs)
         pred = self.decode(latent, ids_restore)
 
-        print(latent.shape)
-        print(pred.shape)
-
         target = self.patchify(inputs)  # Get target patches
-        print(target.shape)
+
         loss = (pred - target) ** 2
         loss = loss.mean(dim=-1)
 
