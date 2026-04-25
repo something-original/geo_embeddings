@@ -1,6 +1,12 @@
+from model import S2VecModel
+
 import os
 import logging
+from pathlib import Path
+
 import numpy as np
+import optuna
+from optuna.integration import PyTorchLightningPruningCallback
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -8,8 +14,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from pathlib import Path
-from model import S2VecModel
+
 
 
 torch.set_float32_matmul_precision('high')
