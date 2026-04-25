@@ -10,8 +10,8 @@ import math
 import timm
 import torchgeo.models
 from torchgeo.models import ResNet18_Weights, ResNet50_Weights, ViTSmall16_Weights
-from location_encoder import get_positional_encoding, get_neural_network, LocationEncoder
-from datamodules.s2geo_dataset import S2Geo
+from emb_fit.models.satclip.satclip.location_encoder import get_positional_encoding, get_neural_network, LocationEncoder
+from emb_fit.models.satclip.satclip.datamodules.s2geo_dataset import S2Geo
 
 class Bottleneck(nn.Module):
     expansion = 4

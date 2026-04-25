@@ -1,62 +1,132 @@
-import pandas as pd
+import logging
 import numpy as np
-from pathlib import Path
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+import torch
+from torch.utils.data import Dataset, DataLoader
 
 
-def load_dataset(data_path: Path, target_col: str = None):
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class TabularImageDataset(Dataset):
     """
-    Загружает датасет из файла.
-
-    Args:
-        data_path: Путь к файлу данных
-        target_col: Название колонки с таргетом (если None, возвращает только X)
-
-    Returns:
-        X, y (если target_col указан) или только X
+    Датасет для преобразования табличных данных в 'изображения' для S2Vec.
     """
-    if data_path.suffix == '.pkl':
-        data = pd.read_pickle(data_path)
-    elif data_path.suffix == '.csv':
-        data = pd.read_csv(data_path)
-    else:
-        raise ValueError(f"Unsupported file format: {data_path.suffix}")
+    def __init__(self, csv_path, img_size=32, fill_value=-1.0, sep=';'):
+        """
+        Args:
+            csv_path: Путь к CSV файлу.
+            img_size: Размер стороны квадратного 'изображения' (H и W). 
+                      Общее кол-во признаков должно быть <= img_size**2.
+            fill_value: Значение, которым заполняются NaN и недостающие признаки.
+        """
+        self.img_size = img_size
+        self.fill_value = fill_value
+        self.total_pixels = img_size * img_size
+        self.sep = sep
 
-    if target_col:
-        if target_col not in data.columns:
-            raise ValueError(f"Target column '{target_col}' not found in data")
-        X = data.drop(columns=[target_col])
-        y = data[target_col]
-        return X, y
-    return data
+        self.df = pd.read_csv(csv_path, sep=self.sep)
+        self.features = self.df.values.astype(np.float32)
+
+        n_features = self.features.shape[1]
+        if n_features > self.total_pixels:
+            raise ValueError(f"Too many features ({n_features}) for image {img_size}x{img_size}")
+
+    def __len__(self):
+        return len(self.features)
+
+    def __getitem__(self, idx):
+        row = self.features[idx]
+
+        row = np.nan_to_num(
+            row,
+            nan=self.fill_value,
+            posinf=self.fill_value,
+            neginf=self.fill_value
+        )
+
+        n_features = len(row)
+        if n_features < self.total_pixels:
+            padding = np.full((self.total_pixels - n_features,), self.fill_value, dtype=np.float32)
+            row = np.concatenate([row, padding])
+
+        image = row.reshape(1, self.img_size, self.img_size)
+
+        return torch.tensor(image, dtype=torch.float32), torch.tensor(0)
 
 
-def load_embeddings(embeddings_dir: Path, id_col: str = 'level_0', prefix: str = 'emb_'):
-    """
-    Загружает эмбеддинги из директории с .npy файлами.
+def get_dataloader(csv_path, img_size=32, batch_size=64, num_workers=4, shuffle=False):
+    dataset = TabularImageDataset(csv_path, img_size=img_size)
 
-    Args:
-        embeddings_dir: Директория с .npy файлами эмбеддингов
-        id_col: Название колонки с ID для сопоставления
-        prefix: Префикс для названий колонок эмбеддингов
-
-    Returns:
-        DataFrame с эмбеддингами
-    """
-    embeddings_dict = {}
-    for file_path in embeddings_dir.glob('*.npy'):
-        file_key = file_path.stem
-        embeddings_dict[file_key] = np.load(file_path)
-
-    if not embeddings_dict:
-        raise ValueError(f"No .npy files found in {embeddings_dir}")
-
-    emb_dim = next(iter(embeddings_dict.values())).shape[0]
-    embeddings_df = pd.DataFrame.from_dict(
-        embeddings_dict,
-        orient='index',
-        columns=[f'{prefix}{i}' for i in range(emb_dim)]
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=True,
     )
-    embeddings_df.index.name = id_col
-    embeddings_df = embeddings_df.reset_index()
 
-    return embeddings_df
+
+def prepare_and_save_dataset(
+    dataset_path: str,
+    features_to_drop: list[str],
+    train_path: str,
+    val_path: str,
+    csv_sep: str = ';',
+    id_col: str | None = None,
+    use_scaler: bool = False,
+    scaler: StandardScaler | None = None,
+    test_size: float = 0.25,
+    nan_fill_threshold: float = 0.9,
+) -> None:
+
+    df_full = pd.read_csv(dataset_path, sep=csv_sep)
+    logger.info(f'Full dataset shape: {df_full.shape}')
+    mask_all_nan = df_full.isna().all(axis=1)
+
+    if id_col:
+        dropped_ids = df_full.loc[mask_all_nan, id_col].tolist()
+        logger.info(f'Dropped ids: {dropped_ids}')
+
+    df_full.drop(columns=features_to_drop, inplace=True, errors='ignore')
+    df_full = df_full[~mask_all_nan].reset_index(drop=True)    
+    df_full = df_full.select_dtypes(include=[np.number])
+    logger.info(f'Shape after dropping: {df_full.shape}')
+
+    df_full = df_full.replace([np.inf, -np.inf], np.nan)
+
+    logger.info(f'Nan threshold: {nan_fill_threshold}')
+    nan_ratio = df_full.isnull().mean()
+
+    cols_to_drop = nan_ratio[nan_ratio > nan_fill_threshold].index
+    df_full = df_full.drop(columns=cols_to_drop)
+    if cols_to_drop.any():
+        print(f"Columns dropped with nan ratios: {list(cols_to_drop)}")
+
+    df_train, df_val = train_test_split(df_full, test_size=test_size, random_state=42)
+    logger.info(f'Train shape: {df_train.shape}')
+    logger.info(f'Val shape: {df_val.shape}')
+
+    if use_scaler and scaler is not None:
+        df_train_for_scaler = df_train.fillna(df_train.median())
+        df_val_for_scaler = df_val.fillna(df_val.median())
+
+        train_scaled = pd.DataFrame(
+            scaler.fit_transform(df_train_for_scaler), columns=df_train.columns
+        )
+        val_scaled = pd.DataFrame(
+            scaler.transform(df_val_for_scaler), columns=df_val.columns
+        )
+
+        train_scaled_final = np.where(df_train.isnull(), -1.0, train_scaled.values)
+        val_scaled_final = np.where(df_val.isnull(), -1.0, val_scaled.values)
+
+        df_train = pd.DataFrame(train_scaled_final)
+        df_val = pd.DataFrame(val_scaled_final)
+
+    df_train.to_csv(train_path, sep=csv_sep, index=False)
+    df_val.to_csv(val_path, sep=csv_sep, index=False)

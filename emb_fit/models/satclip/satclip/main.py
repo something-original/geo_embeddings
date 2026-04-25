@@ -3,10 +3,10 @@ from pathlib import Path
 
 import lightning.pytorch
 import torch
-from datamodules.s2geo_dataset import S2GeoDataModule
+from emb_fit.models.satclip.satclip.datamodules.s2geo_dataset import S2GeoDataModule
 from lightning.pytorch.cli import LightningCLI
-from loss import SatCLIPLoss
-from model import SatCLIP
+from emb_fit.models.satclip.satclip.loss import SatCLIPLoss
+from emb_fit.models.satclip.satclip.model import SatCLIP
 
 torch.set_float32_matmul_precision('high')
 

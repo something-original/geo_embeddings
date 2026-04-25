@@ -49,6 +49,7 @@ dependencies = [
     "polars (>=1.39.3,<2.0.0)",
     "certifi (>=2026.2.25,<2027.0.0)",
     "optuna (>=4.8.0,<5.0.0)",
+    "optuna-integration[pytorch-lightning] (>=4.8.0,<5.0.0)",
 ]
 
 

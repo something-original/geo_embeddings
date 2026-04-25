@@ -15,8 +15,8 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from models.GNN.deep_gnn import DeepGNN
-from utils import load_dataset
+from emb_fit.models.GNN.deep_gnn import DeepGNN
+from emb_fit.utils import load_dataset
 
 
 def train_gnn(

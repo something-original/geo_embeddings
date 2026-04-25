@@ -1,15 +1,3 @@
-"""
-Базовый скрипт для бенчмарка моделей эмбеддингов.
-
-Сравнивает производительность различных моделей эмбеддингов
-на различных downstream задачах.
-
-Запуск из корня проекта:
-    python benchmarks/benchmark.py
-    или
-    python -m benchmarks.benchmark
-"""
-
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -17,14 +5,22 @@ import pandas as pd
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from catboost import CatBoostRegressor
-from models import (
+from emb_fit.models import (
     DeepGNN,
     RasterEmbedder,
-    GeoCLIP,
     SatCLIP,
     S2VecModel
 )
-from utils import load_dataset, load_embeddings
+from emb_fit import (
+    get_dataloader,
+    get_gnn_embeddings,
+    get_tabpfn_embeddings,
+    get_satclip_embeddings,
+    prepare_and_save_dataset,
+    train_gnn,
+    train_tabpfn,
+)
+from 
 
 
 PROJECT_ROOT = Path(__file__).parent.parent

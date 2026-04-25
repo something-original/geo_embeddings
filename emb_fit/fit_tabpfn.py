@@ -8,7 +8,7 @@ from tabpfn import TabPFNRegressor
 from tqdm import tqdm
 import pickle
 
-from utils import load_dataset
+from emb_fit.utils import load_dataset
 
 
 def train_tabpfn(

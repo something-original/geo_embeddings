@@ -20,7 +20,7 @@ project_root = Path(__file__).resolve().parent.parent
 satclip_path = project_root / 'models' / 'satclip' / 'satclip'
 if str(satclip_path) not in sys.path:
     sys.path.insert(0, str(satclip_path))
-from utils import load_dataset
+from emb_fit.utils import load_dataset
 
 try:
     from huggingface_hub import hf_hub_download
