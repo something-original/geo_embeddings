@@ -1,4 +1,4 @@
-import cianparser
+
 
 
 def parse_cities(city_name_list: list):
@@ -13,4 +13,5 @@ def parse_cities(city_name_list: list):
 
 
 if __name__ == '__main__':
-    city_name_list = ['Москва', 'Екатеринбург', 'Санкт-Петербург']
+    city_name_list = ['Онохино']
+    parse_cities(city_name_list)

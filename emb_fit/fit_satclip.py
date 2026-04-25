@@ -13,23 +13,8 @@ import os
 from pathlib import Path
 from typing import Union, List, Tuple
 from tqdm import tqdm
-import sys
-
-# Добавляем путь к satclip модулю
-project_root = Path(__file__).resolve().parent.parent
-satclip_path = project_root / 'models' / 'satclip' / 'satclip'
-if str(satclip_path) not in sys.path:
-    sys.path.insert(0, str(satclip_path))
-from emb_fit.utils import load_dataset
-
-try:
-    from huggingface_hub import hf_hub_download
-    from load import get_satclip
-except ImportError as e:
-    raise ImportError(
-        f"Не удалось импортировать необходимые модули для SatCLIP: {e}\n"
-        "Установите зависимости: pip install huggingface_hub"
-    )
+from huggingface_hub import hf_hub_download
+from models.satclip.satclip.load import get_satclip
 
 
 def get_satclip_embeddings(
