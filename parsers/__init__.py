@@ -1,1 +1,1 @@
-from .cianparser.example import main
+from .fns_parser.main import start
