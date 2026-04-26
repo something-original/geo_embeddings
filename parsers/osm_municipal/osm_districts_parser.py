@@ -6,7 +6,7 @@ import geopandas as gpd
 from shapely import Point, wkt
 
 from pathlib import Path
-from dotenv import load_dotenv
+from config import MUN_GEOMS_LINK
 import subprocess
 
 import ssl
@@ -25,9 +25,7 @@ async def load_mun_geometry(mun_data_geom_link, save_path):
 
 def main():
 
-    load_dotenv()
     root_dir = Path(__file__).resolve().parents[2]
-    mun_data_geom_link = os.getenv('MUN_GEOMS_LINK')
 
     path_parts = [root_dir, 'datasets', 'mun_data']
     mun_districts_df_path = os.path.join(*path_parts, 'municipalities.csv')
@@ -40,7 +38,7 @@ def main():
     save_path = os.path.join(*path_parts, 'mun_data_geom.rar')
 
     if not Path(save_path).exists():
-        asyncio.run(load_mun_geometry(mun_data_geom_link, save_path))
+        asyncio.run(load_mun_geometry(MUN_GEOMS_LINK, save_path))
 
     files_before = set(save_folder.rglob('*'))
     unpack_cmd = ["7z", "x", save_path, f"-o{save_folder}", "-y"]

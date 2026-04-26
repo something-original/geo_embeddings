@@ -1,0 +1,1 @@
+from .cianparser.example import main
