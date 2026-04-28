@@ -11,7 +11,6 @@ from sklearn.preprocessing import StandardScaler
 from catboost import CatBoostRegressor
 from emb_fit.models import (
     DeepGNN,
-    RasterEmbedder,
     SatCLIP,
     S2VecModel
 )
@@ -27,33 +26,113 @@ from emb_fit import (
     train_s2vec,
 )
 
+from tasks import FlatsTask, FNSTask
 
-def get_test_val_data():
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    root_dir = Path(__file__).resolve().parents[2]
-    path_parts = [root_dir, 'datasets', 'mun_data']
+root_dir = Path(__file__).resolve().parent
 
-    dataset_path = os.path.join(*path_parts, 'indicator_values.csv')
-    train_path = os.path.join(*path_parts, 'indicator_values_train.csv')
-    val_path = os.path.join(*path_parts, 'indicator_values_val.csv')
+flats_dataset_path = os.path.join(root_dir, 'datasets', 'flats', 'flats_merged.csv')
+fns_dataset_path = os.path.join(root_dir, 'datasets', 'fns')
 
-    features_to_drop = ['municipality_id']
-    scaler = StandardScaler()
 
-    prepare_and_save_dataset(
-        dataset_path=dataset_path,
-        features_to_drop=features_to_drop,
-        train_path=train_path,
-        val_path=val_path,
-        csv_sep=';',
-        use_scaler=True,
-        scaler=scaler,
-        test_size=0.25,
-    )
+model = CatBoostRegressor()
+flats_task = FlatsTask(
+    dataset_path=flats_dataset_path,
+    features=[
+        'dealType', 'roomsCount', 'repairType', 'hasFurniture', 'isApartments',
+        'floorNumber', 'flatType', 'livingArea', 'windowsViewType', 'balconiesCount',
+        'kitchenArea', 'isRecidivist', 'totalArea', 'hasLift', 'buildYear',
+        'materialType' ,'distance_to_center', 'highways_count', 'undergrounds_count',
+        'railways_count', 'time_to_metro', 'price'
+    ],
+    geom_col='geometry',
+    val_ratio=0.2,
+    model=model.copy(),
+    target_col='price',
+    dataset_crs='EPSG:3857',
+    cat_features=[
+        'hasFurniture', 'isApartments', 'flatType',
+        'isRecidivist', 'hasLift', 'materialType',
+        'windowsViewType'
+    ]
+)
+
+fns_task_kkt = FNSTask(
+    dataset_path=fns_dataset_path,
+    features=[
+        'CacheBillPercent', 'CachePayPercent', 'IntensityOfNumberBills', 'RevenueIntensity',
+        'IsMall', 'IsRare', 'IsEcommerce', 'TopCategories',
+        'ReceiptTotalCount'
+    ],
+    cat_features=['IsMall', 'IsRare', 'IsEcommerce'],
+    geom_col='coordinates',
+    val_ratio=0.2,
+    model=model.copy(),
+    target_col='KktCount'
+)
+
+
+fns_task_avg_bill = FNSTask(
+    dataset_path=fns_dataset_path,
+    features=[
+        'CacheBillPercent', 'CachePayPercent', 'IntensityOfNumberBills', 'RevenueIntensity',
+        'IsMall', 'IsRare', 'IsEcommerce', 'TopCategories',
+        'ReceiptTotalCount'
+    ],
+    cat_features=['IsMall', 'IsRare', 'IsEcommerce'],
+    geom_col='coordinates',
+    val_ratio=0.2,
+    model=model.copy(),
+    target_col='AverageBill'
+)
+
+flats_task.prepare_dataset()
+fns_task_kkt.prepare_dataset()
+fns_task_avg_bill.prepare_dataset()
+
+
+features_to_drop = ['municipality_id']
+scaler = StandardScaler()
+
+path_parts = [root_dir, 'datasets', 'mun_data']
+dataset_path = os.path.join(*path_parts, 'indicator_values.csv')
+train_path = os.path.join(*path_parts, 'indicator_values_train.csv')
+val_path = os.path.join(*path_parts, 'indicator_values_val.csv')
+
+prepare_and_save_dataset(
+    dataset_path=dataset_path,
+    features_to_drop=features_to_drop,
+    train_path=train_path,
+    val_path=val_path,
+    csv_sep=';',
+    use_scaler=True,
+    scaler=scaler,
+    test_size=0.25,
+)
+
+X_train = pd.read_csv(train_path, sep=';')
+X_test = pd.read_csv(val_path, sep=';')
+
+#TODO: выбор признаков кроме эмбеддингов для мун.образований
+
+deep_gnn_model, deep_gnn_scaler = train_gnn(
+    X_train=X_train,
+    y_train=None,
+    device=DEVICE,
+    y_test=None,
+    
+)
+tabpfn_model, tabpfn_scaler = train_tabpfn()
+s2vec_model = train_s2vec()
+satclip_model = SatCLIP()
+
+
+models_list = []
 
 PROJECT_ROOT = Path(__file__).parent.parent
 checkpoint_path = [Path(__file__).resolve().parent, 'models', 's2vec', 'checkpoints']
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 
 
 def evaluate_model(X_train, X_test, y_train, y_test, model_name: str = "CatBoost"):
