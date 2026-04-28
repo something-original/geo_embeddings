@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
+from ast import literal_eval
 from typing import Any
 
 import geopandas as gpd
+import pandas as pd
 from sklearn.model_selection import train_test_split
 import optuna
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error, r2_score
@@ -10,7 +12,7 @@ from scipy.stats import pearsonr
 from pathlib import Path
 import os
 from catboost import CatBoostRegressor
-from shapely import wkt
+from shapely import Polygon, wkt
 
 
 class BaseTask(ABC):
@@ -71,7 +73,7 @@ class BaseTask(ABC):
         self.x_val_geom = self.x_val[self.geom_col]
         self.x_test_geom = self.x_test[self.geom_col]
 
-        self._drop_cols([self.geom_col, self.target_col])
+        self._drop_cols([self.geom_col])
 
     def add_embeddings(
         self,
@@ -175,15 +177,27 @@ class FNSTask(BaseTask):
         from parsers import start
 
         save_path_level_10 = os.path.join(self.dataset_path, 'fns_level_10.csv')
-        save_path_level_7 = os.path.join(self.dataset_path, 'fns_level_7.csv')
         os.makedirs(self.dataset_path, exist_ok=True)
 
         if not os.path.exists(save_path_level_10):
             start(save_path_level_10, resolution=10)
-        if not os.path.exists(save_path_level_7):
-            start(save_path_level_7, resolution=10)
 
         os.chdir(cwd)
+
+        df_fns = pd.read_csv(save_path_level_10, encoding='utf-8')
+        df_fns = df_fns[self.features + [self.geom_col, self.target_col]]
+
+        df_fns[self.geom_col] = df_fns[self.geom_col].apply(lambda x: Polygon(literal_eval(x)[0]))
+        for col in df_fns.columns:
+            if isinstance(df_fns[col].iloc[0], str):
+                df_fns[col] = df_fns[col].apply(literal_eval)
+            if col != self.geom_col and col not in self.cat_features:
+                df_fns[col] = df_fns[col].apply(lambda x: x[0] if isinstance(x, list) else x)
+
+        X = df_fns[self.features + [self.geom_col]]
+        y = df_fns[self.target_col]
+
+        return X, y
 
 
 if __name__ == '__main__':
@@ -204,7 +218,7 @@ if __name__ == '__main__':
         ],
         geom_col='geometry',
         val_ratio=0.2,
-        model=model,
+        model=model.copy(),
         target_col='price',
         dataset_crs='EPSG:3857',
         cat_features=[
@@ -222,12 +236,13 @@ if __name__ == '__main__':
         dataset_path=fns_dataset_path,
         features=[
             'CacheBillPercent', 'CachePayPercent', 'IntensityOfNumberBills', 'RevenueIntensity',
-            'PeriodStart', 'PeriodEnd', 'IsMall', 'IsRare', 'IsEcommerce', 'TopCategories',
-            'Title', 'ActiveHours', 'ReceiptTotalCount'
+            'IsMall', 'IsRare', 'IsEcommerce', 'TopCategories',
+            'ReceiptTotalCount'
         ],
+        cat_features=['IsMall', 'IsRare', 'IsEcommerce'],
         geom_col='coordinates',
         val_ratio=0.2,
-        model=model,
+        model=model.copy(),
         target_col='KktCount'
     )
 
