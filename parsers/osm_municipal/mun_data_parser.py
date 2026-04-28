@@ -8,10 +8,11 @@ import polars as pl
 import tempfile
 import logging
 from pathlib import Path
-from dotenv import load_dotenv
 import fastzipfile  # noqa: F401
 from zipfile import ZipFile
 from tqdm import tqdm
+
+from config import TOCHNO_ST_BASE_LINK
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,13 +54,11 @@ async def download_one_file(session, semaphore, base_download_url, section_id, d
 
 
 def download_mun_data(root_dir):
-    load_dotenv()
 
-    base_download_url = os.getenv("TOCHNO_ST_BASE_LINK")
     mun_datasets_df_path = os.path.join(root_dir, "datasets", "mun_datasets_metadata.csv")
     mun_datasets_df = pl.read_csv(mun_datasets_df_path, separator=";")
 
-    asyncio.run(download_all_files(base_download_url, mun_datasets_df))
+    asyncio.run(download_all_files(TOCHNO_ST_BASE_LINK, mun_datasets_df))
 
 
 class FeatureStore:

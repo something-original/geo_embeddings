@@ -1,5 +1,5 @@
 import torch
-from location_encoder import get_neural_network, get_positional_encoding, LocationEncoder
+from emb_fit.models.satclip.satclip.location_encoder import get_neural_network, get_positional_encoding, LocationEncoder
 
 
 def get_satclip_loc_encoder(ckpt_path, device):

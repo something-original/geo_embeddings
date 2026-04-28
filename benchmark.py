@@ -1,33 +1,59 @@
-"""
-Базовый скрипт для бенчмарка моделей эмбеддингов.
-
-Сравнивает производительность различных моделей эмбеддингов
-на различных downstream задачах.
-
-Запуск из корня проекта:
-    python benchmarks/benchmark.py
-    или
-    python -m benchmarks.benchmark
-"""
-
+import os
 from pathlib import Path
 import numpy as np
 import pandas as pd
+import torch
 
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
 from catboost import CatBoostRegressor
-from models import (
+from emb_fit.models import (
     DeepGNN,
     RasterEmbedder,
-    GeoCLIP,
     SatCLIP,
     S2VecModel
 )
-from utils import load_dataset, load_embeddings
+from emb_fit import (
+    get_dataloader,
+    get_gnn_embeddings,
+    get_tabpfn_embeddings,
+    get_s2vec_embeddings,
+    get_satclip_embeddings,
+    prepare_and_save_dataset,
+    train_gnn,
+    train_tabpfn,
+    train_s2vec,
+)
 
+
+def get_test_val_data():
+
+    root_dir = Path(__file__).resolve().parents[2]
+    path_parts = [root_dir, 'datasets', 'mun_data']
+
+    dataset_path = os.path.join(*path_parts, 'indicator_values.csv')
+    train_path = os.path.join(*path_parts, 'indicator_values_train.csv')
+    val_path = os.path.join(*path_parts, 'indicator_values_val.csv')
+
+    features_to_drop = ['municipality_id']
+    scaler = StandardScaler()
+
+    prepare_and_save_dataset(
+        dataset_path=dataset_path,
+        features_to_drop=features_to_drop,
+        train_path=train_path,
+        val_path=val_path,
+        csv_sep=';',
+        use_scaler=True,
+        scaler=scaler,
+        test_size=0.25,
+    )
 
 PROJECT_ROOT = Path(__file__).parent.parent
+checkpoint_path = [Path(__file__).resolve().parent, 'models', 's2vec', 'checkpoints']
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 def evaluate_model(X_train, X_test, y_train, y_test, model_name: str = "CatBoost"):

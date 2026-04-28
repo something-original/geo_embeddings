@@ -15,13 +15,14 @@ project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from models.GNN.deep_gnn import DeepGNN
-from utils import load_dataset
+from emb_fit.models import DeepGNN
+from emb_fit.utils import load_dataset
 
 
 def train_gnn(
     X_train,
     y_train,
+    device: str,
     X_test=None,
     y_test=None,
     output_path: str = "emb_fit/gnn_model.pt",
@@ -32,7 +33,6 @@ def train_gnn(
     n_epochs: int = 100,
     learning_rate: float = 0.001,
     columns_to_drop: list = None,
-    device: str = None,
     random_state: int = 42
 ):
     """
@@ -58,9 +58,6 @@ def train_gnn(
         model: Обученная GNN модель
         scaler: StandardScaler для масштабирования признаков
     """
-
-    if device is None:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     torch.manual_seed(random_state)
     np.random.seed(random_state)
