@@ -1,5 +1,5 @@
-from utils import get_dataloader
-from models import S2VecModel
+from .utils import get_dataloader
+from .models import S2VecModel
 
 import numpy as np
 import torch

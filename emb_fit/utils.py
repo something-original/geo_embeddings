@@ -75,6 +75,7 @@ def prepare_and_save_dataset(
     dataset_path: str,
     indicators_path: str,
     features_to_drop: list[str],
+    index_feature: str,
     experiment_target_features: list[str],
     train_path: str,
     train_full_path: str,
@@ -115,6 +116,8 @@ def prepare_and_save_dataset(
     target_feature_col_names = []
     
     if experiment_target_features:
+        logger.info(f'Target features: {experiment_target_features}')
+
         target_feature_ids = df_base_indicators[
             df_base_indicators['name'].isin(experiment_target_features)
         ]['id']
@@ -126,6 +129,8 @@ def prepare_and_save_dataset(
             df_full[target_feature_col_name] = np.nansum(df_full[id_cols].values, axis=1)
             df_full.drop(columns=id_cols, inplace=True)
             
+
+    df_full.set_index(index_feature)
 
     df_train, df_val = train_test_split(df_full, test_size=test_size, random_state=42)
     logger.info(f'Train shape: {df_train.shape}')
@@ -150,7 +155,7 @@ def prepare_and_save_dataset(
 
     kwargs = {'sep': csv_sep, 'index': False}
     df_train.to_csv(train_path, **kwargs)
-    df_val.to_csv(val_path, sep=csv_sep, **kwargs)
+    df_val.to_csv(val_path, **kwargs)
     df_full.to_csv(train_full_path, **kwargs)
 
     return target_feature_col_names

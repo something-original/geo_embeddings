@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Union, List, Tuple
 from tqdm import tqdm
 from huggingface_hub import hf_hub_download
-from models.satclip.satclip.load import get_satclip
+from .models.satclip.satclip.load import get_satclip
 
 
 def get_satclip_embeddings(

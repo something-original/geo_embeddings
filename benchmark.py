@@ -39,6 +39,8 @@ from tasks import (
     WorkplacesDistrictsTask
 )
 
+from utils import get_geometry_points
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -47,10 +49,13 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 root_dir = Path(__file__).resolve().parent
 
-flats_dataset_path = os.path.join(root_dir, 'datasets', 'flats', 'flats_merged.csv')
-fns_dataset_path = os.path.join(root_dir, 'datasets', 'fns')
-people_dataset_path = os.path.join(root_dir, 'datasets', 'people', 'building_people_dataset.csv')
-workplaces_dataset_path = os.path.join(root_dir, 'datasets', 'workplaces', 'workplaces_districts.csv')
+path_parts = [root_dir, 'datasets']
+
+flats_dataset_path = os.path.join(*path_parts, 'flats', 'flats_merged.csv')
+fns_dataset_path = os.path.join(*path_parts, 'fns')
+people_dataset_path = os.path.join(*path_parts, 'people', 'building_people_dataset.csv')
+workplaces_dataset_path = os.path.join(*path_parts, 'workplaces', 'workplaces_districts.csv')
+municiplaities_path = os.path.join(*path_parts, 'mun_data', 'municipalities_csv')
 
 model = CatBoostRegressor()
 
@@ -130,11 +135,12 @@ if CHECK_PEOPLE_WORKPLACES_TASKS:
     
 
 for task in tasks:
-    logger.info(f'Preparing dataset for task: {str(task)}')
+    logger.info(f'Preparing dataset for task: {str(task)}, target: {task.target_col}')
     task.prepare_dataset()
 
 
-features_to_drop = ['municipality_id']
+features_to_drop = []
+index_feature = 'municipality_id'
 scaler = StandardScaler()
 
 path_parts = [root_dir, 'datasets', 'mun_data']
@@ -148,6 +154,7 @@ target_col_names, train_full_path = prepare_and_save_dataset(
     dataset_path=dataset_path,
     indicators_path=indicators_path,
     features_to_drop=features_to_drop,
+    index_feature=index_feature,
     experiment_target_features=EXPERIMENT_TARGET_FEATURES,
     train_path=train_path,
     train_full_path=train_full_path,
@@ -161,7 +168,7 @@ target_col_names, train_full_path = prepare_and_save_dataset(
 
 X_train = pd.read_csv(train_path, sep=';')
 X_test = pd.read_csv(val_path, sep=';')
-X = pd.concat(X_train, X_test, ignore_index=True, axis=0)
+X = pd.concat([X_train, X_test], ignore_index=False, axis=0)
 
 target_cols = {}
 y_train = X_train[target_col_names[0]].copy()
@@ -202,14 +209,20 @@ s2vec_model = train_s2vec(
     device=DEVICE,
 )
 
-deep_gnn_emb_save_path = os.path.join(deep_gnn_output_path, 'gnn_embs.npy')
-tabpfn_emb_save_path = os.path.join(tabpfn_output_path, 'tab_pfn_embs.npy')
-s2vec_emb_save_path = os.path.join(s2vec_output_path, 's2vec_embs_npy')
-satclip_emb_save_path = os.path.join(satclip_output_path, 'satclip_embs.npy')
+emb_save_paths = {
+    'gnn': os.path.join(deep_gnn_output_path, 'gnn_embs.npy'),
+    'tabpfn': os.path.join(tabpfn_output_path, 'tab_pfn_embs.npy'),
+    's2vec': os.path.join(s2vec_output_path, 's2vec_embs_npy'),
+    'satclip':os.path.join(satclip_output_path, 'satclip_embs.npy')
+}
+
+s2vec_checkpoint_save_path = os.path.join(s2vec_output_path, 'satclip-resnet18-l40.ckpt')
 
 s2vec_data_loader = get_dataloader(
     csv_path=train_full_path
 )
+
+mun_geometry_points = get_geometry_points(municiplaities_path)
 
 get_gnn_embeddings(
     model=deep_gnn_model,
@@ -217,27 +230,54 @@ get_gnn_embeddings(
     edge_index=None,
     scaler=tabpfn_scaler,
     device=DEVICE,
-    embs_save_path=deep_gnn_emb_save_path,
+    embs_save_path=emb_save_paths['gnn'],
 )
 
 get_tabpfn_embeddings(
     model=tabpfn_model,
     X=X,
-    embs_save_path=tabpfn_emb_save_path,
+    embs_save_path=emb_save_paths['tabpfn'],
     scaler=tabpfn_scaler,
 )
 
 get_s2vec_embeddings(
     model=s2vec_model,
     loader=s2vec_data_loader,
-    embs_save_path=s2vec_emb_save_path,
+    embs_save_path=emb_save_paths['s2vec'],
     device=DEVICE,
 )
 
 get_satclip_embeddings(
+    coordinates=mun_geometry_points,
     device=DEVICE,
-    output_path=satclip_emb_save_path
+    checkpoint_filename=s2vec_checkpoint_save_path,
+    output_path=emb_save_paths['satclip']
 )
+
+param_distributions = {
+    "learning_rate": (0.01, 0.1),
+    "depth": (4, 8),
+    "l2_leaf_reg": (1, 10),
+    "bagging_temperature": (0, 1),
+    "random_strength": (0, 5),
+    "min_data_in_leaf": (10, 50),
+    "subsample": (0.6, 1.0)
+}
+
+for task in tasks:
+    logger.info(f'Task: {str(task)}, target: {task.target_col}')
+    logger.info('Solving without embeddings')
+    
+    basic_results = task.train_and_eval_model(
+        param_distributions=param_distributions,
+        n_trials=50
+    )
+    
+    logger.info(f'Basic results:\n {basic_results} \n')
+
+    for model, path in emb_save_paths.items():
+        logger.info(f'Solving with embeddings from model {model}')
+        
 
 
 

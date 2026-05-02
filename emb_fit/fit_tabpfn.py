@@ -5,6 +5,7 @@ from sklearn.preprocessing import MinMaxScaler
 from tabpfn import TabPFNRegressor
 from tqdm import tqdm
 import pickle
+from typing import Any
 
 
 def train_tabpfn(
