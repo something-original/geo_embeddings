@@ -219,17 +219,21 @@ get_gnn_embeddings(
     device=DEVICE,
     embs_save_path=deep_gnn_emb_save_path,
 )
+
 get_tabpfn_embeddings(
     model=tabpfn_model,
     X=X,
     embs_save_path=tabpfn_emb_save_path,
     scaler=tabpfn_scaler,
 )
+
 get_s2vec_embeddings(
     model=s2vec_model,
     loader=s2vec_data_loader,
-    enbs_save_path=s2vec_emb_save_path,
+    embs_save_path=s2vec_emb_save_path,
+    device=DEVICE,
 )
+
 get_satclip_embeddings(
     device=DEVICE,
     output_path=satclip_emb_save_path
