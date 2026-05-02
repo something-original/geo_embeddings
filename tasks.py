@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from ast import literal_eval
 from typing import Any
 
@@ -16,6 +16,8 @@ from shapely import Polygon, wkt
 
 
 class BaseTask(ABC):
+    task_name: str = "BaseTask"
+
     def __init__(
         self,
         dataset_path: str,
@@ -25,7 +27,7 @@ class BaseTask(ABC):
         val_ratio: float,
         model: Any,
         dataset_link: str | None = None,
-        dataset_crs: str = 'EPSG:4326',
+        dataset_crs: str = "EPSG:4326",
         cat_features: list[str] = [],
     ):
         super().__init__()
@@ -48,17 +50,17 @@ class BaseTask(ABC):
         self.x_test_geom: gpd.GeoSeries = None
 
         self.dataset_crs = dataset_crs
-        self.crs = 'EPSG:4326'
+        self.crs = "EPSG:4326"
         self.cat_features = cat_features
 
-    @abstractmethod
-    def _load_dataset(self) -> tuple[Any, Any]:
-        pass
+
+    def __str__(self) -> str:
+        return self.task_name
 
     def _drop_cols(self, columns: list[str]) -> None:
         self.x_train = self.x_train.drop(columns=columns)
         self.x_val = self.x_val.drop(columns=columns)
-        self.x_test = self.x_test.drop(columns=columns)       
+        self.x_test = self.x_test.drop(columns=columns)
 
     def prepare_dataset(self) -> None:
         X, y = self._load_dataset()
@@ -75,19 +77,21 @@ class BaseTask(ABC):
 
         self._drop_cols([self.geom_col])
 
-    def add_embeddings(
-        self,
-        embeddings: gpd.GeoDataFrame,
-        emb_geom_col: str
-    ) -> None:
+    def add_embeddings(self, embeddings: gpd.GeoDataFrame, emb_geom_col: str) -> None:
 
         self.x_train[self.geom_col] = self.x_train_geom
         self.x_val[self.geom_col] = self.x_val_geom
         self.x_test[self.geom_col] = self.x_test_geom
 
-        self.x_train = gpd.GeoDataFrame(self.x_train).set_geometry(self.geom_col).set_crs(self.crs)
-        self.x_val = gpd.GeoDataFrame(self.x_val).set_geometry(self.geom_col).set_crs(self.crs)
-        self.x_test = gpd.GeoDataFrame(self.x_test).set_geometry(self.geom_col).set_crs(self.crs)
+        self.x_train = (
+            gpd.GeoDataFrame(self.x_train).set_geometry(self.geom_col).set_crs(self.crs)
+        )
+        self.x_val = (
+            gpd.GeoDataFrame(self.x_val).set_geometry(self.geom_col).set_crs(self.crs)
+        )
+        self.x_test = (
+            gpd.GeoDataFrame(self.x_test).set_geometry(self.geom_col).set_crs(self.crs)
+        )
 
         self.x_train = self.x_train.sjoin(embeddings)
         self.x_val = self.x_val.sjoin(embeddings)
@@ -97,9 +101,11 @@ class BaseTask(ABC):
         emb_col_set.remove(emb_geom_col)
         self.features.extend(list(emb_col_set))
 
-        self._drop_cols([self.geom_col])    
+        self._drop_cols([self.geom_col])
 
-    def train_and_eval_model(self, param_distributions: dict, n_trials: int = 100) -> dict:
+    def train_and_eval_model(
+        self, param_distributions: dict, n_trials: int = 100
+    ) -> dict:
         def objective(trial):
             params = {}
             for param_name, param_range in param_distributions.items():
@@ -110,15 +116,19 @@ class BaseTask(ABC):
                     else:
                         params[param_name] = trial.suggest_float(param_name, low, high)
                 elif isinstance(param_range, list):
-                    params[param_name] = trial.suggest_categorical(param_name, param_range)
+                    params[param_name] = trial.suggest_categorical(
+                        param_name, param_range
+                    )
                 else:
-                    raise ValueError(f"Unsupported parameter range format for {param_name}")
+                    raise ValueError(
+                        f"Unsupported parameter range format for {param_name}"
+                    )
 
-            model_instance = self.model.__class__(**{**self.model.get_params(), **params})
+            model_instance = self.model.__class__(
+                **{**self.model.get_params(), **params}
+            )
             model_instance.fit(
-                self.x_train,
-                self.y_train,
-                cat_features=self.cat_features
+                self.x_train, self.y_train, cat_features=self.cat_features
             )
 
             y_pred_val = model_instance.predict(self.x_val)
@@ -130,11 +140,7 @@ class BaseTask(ABC):
 
         best_params = study.best_params
         best_model = self.model.__class__(**{**self.model.get_params(), **best_params})
-        best_model.fit(
-            self.x_train,
-            self.y_train,
-            cat_features=self.cat_features
-        )
+        best_model.fit(self.x_train, self.y_train, cat_features=self.cat_features)
 
         y_pred_test = best_model.predict(self.x_test)
 
@@ -148,19 +154,18 @@ class BaseTask(ABC):
             "MAE": mae,
             "R2": r2,
             "Pearson Correlation": pearson_corr,
-            "Best Params": best_params
+            "Best Params": best_params,
         }
 
-
-class FlatsTask(BaseTask):
     def _load_dataset(self):
         dataset = gpd.read_file(self.dataset_path)
         if isinstance(dataset[self.geom_col].iloc[0], str):
             dataset[self.geom_col] = dataset[self.geom_col].apply(wkt.loads)
 
         dataset = gpd.GeoDataFrame(dataset).set_geometry(self.geom_col)
-        dataset[self.geom_col] = dataset[self.geom_col]\
-            .set_crs(self.dataset_crs).to_crs(self.crs)
+        dataset[self.geom_col] = (
+            dataset[self.geom_col].set_crs(self.dataset_crs).to_crs(self.crs)
+        )
 
         X = dataset[self.features + [self.geom_col]]
         y = dataset[self.target_col]
@@ -169,14 +174,16 @@ class FlatsTask(BaseTask):
 
 
 class FNSTask(BaseTask):
+    task_name = "FNS Task"
+
     def _load_dataset(self):
         cwd = os.getcwd()
         root_dir = Path(__file__).resolve().parent
 
-        os.chdir(os.path.join(root_dir, 'parsers', 'fns_parser'))
+        os.chdir(os.path.join(root_dir, "parsers", "fns_parser"))
         from parsers import start
 
-        save_path_level_10 = os.path.join(self.dataset_path, 'fns_level_10.csv')
+        save_path_level_10 = os.path.join(self.dataset_path, "fns_level_10.csv")
         os.makedirs(self.dataset_path, exist_ok=True)
 
         if not os.path.exists(save_path_level_10):
@@ -184,17 +191,31 @@ class FNSTask(BaseTask):
 
         os.chdir(cwd)
 
-        df_fns = pd.read_csv(save_path_level_10, encoding='utf-8')
+        df_fns = pd.read_csv(save_path_level_10, encoding="utf-8")
         df_fns = df_fns[self.features + [self.geom_col, self.target_col]]
 
-        df_fns[self.geom_col] = df_fns[self.geom_col].apply(lambda x: Polygon(literal_eval(x)[0]))
+        df_fns[self.geom_col] = df_fns[self.geom_col].apply(
+            lambda x: Polygon(literal_eval(x)[0])
+        )
         for col in df_fns.columns:
             if isinstance(df_fns[col].iloc[0], str):
                 df_fns[col] = df_fns[col].apply(literal_eval)
             if col != self.geom_col and col not in self.cat_features:
-                df_fns[col] = df_fns[col].apply(lambda x: x[0] if isinstance(x, list) else x)
+                df_fns[col] = df_fns[col].apply(
+                    lambda x: x[0] if isinstance(x, list) else x
+                )
 
         X = df_fns[self.features + [self.geom_col]]
         y = df_fns[self.target_col]
 
         return X, y
+
+
+class FlatsTask(BaseTask):
+    task_name = "Flats price prediciton"
+
+class PeopleHousesTask(BaseTask):
+    task_name = "Population prediction"
+
+class WorkplacesDistrictsTask(BaseTask):
+    task_name = "Workplaces prediction"

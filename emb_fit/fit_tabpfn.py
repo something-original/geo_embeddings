@@ -1,9 +1,7 @@
-import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
 from tabpfn import TabPFNRegressor
 from tqdm import tqdm
 import pickle
@@ -90,8 +88,10 @@ def train_tabpfn(
 def get_tabpfn_embeddings(
     model,
     X,
+    embs_save_path: str,
     batch_size: int = 10000,
-    average_embeddings: bool = True
+    average_embeddings: bool = True,
+    scaler: Any | None = None,
 ):
     """
     Генерирует эмбеддинги с помощью обученной TabPFN модели.
@@ -102,11 +102,11 @@ def get_tabpfn_embeddings(
         batch_size: Размер батча для обработки
         average_embeddings: Если True, усредняет эмбеддинги по батчам
 
-    Returns:
-        embeddings: numpy array с эмбеддингами формы (n_samples, embedding_dim)
     """
     if isinstance(X, np.ndarray):
         X = pd.DataFrame(X)
+    if scaler:
+        X = scaler.transform(X)
 
     embeddings = []
 
@@ -123,40 +123,5 @@ def get_tabpfn_embeddings(
             embeddings.append(batch_embeds)
 
     if embeddings:
-        return np.vstack(embeddings)
-    else:
-        return np.array([])
-
-
-if __name__ == '__main__':
-    root_dir = Path(__file__).resolve().parent.parent
-    df_spb = load_dataset(Path(os.path.join(root_dir, 'datasets/spb_merged.csv')))
-    df_msk = load_dataset(Path(os.path.join(root_dir, 'datasets/moscow_merged.csv')))
-    df_ekb = load_dataset(Path(os.path.join(root_dir, 'datasets/ekb_merged.csv')))
-
-    cols = df_spb.columns
-    df_ekb = df_ekb[[col for col in cols if col in df_ekb.columns]]
-    df_msk = df_msk[[col for col in cols if col in df_msk.columns]]
-    df = pd.concat([df_spb, df_ekb, df_msk], axis=0)
-
-    feature_start_index = df.columns.get_loc('mun_district')
-
-    X = df.iloc[:, feature_start_index + 1:]
-    y = df['price']
-
-    X = X.reset_index().drop(columns=['index'])
-    y = y.reset_index().drop(columns=['index'])
-
-    X = X.dropna()
-    y = y[y.index.isin(X.index)]
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, shuffle=True, random_state=42, train_size=0.7
-    )
-
-    out_path = os.path.join(root_dir, "emb_fit/tab_pfn/tabpfn_model.pkl")
-    model, scaler = train_tabpfn(X_train, y_train['price'], output_path=out_path)
-    tabpfn_embs = get_tabpfn_embeddings(model, X_test)
-
-    np.save(os.path.join(root_dir, 'emb_fit/tab_pfn/tab_pfn_embs.npy'), tabpfn_embs)
-    np.save(os.path.join(root_dir, 'emb_fit/x_test_index.npy'), X_test.index.to_numpy())
+        tabpfn_embs = np.vstack(embeddings)
+        np.save(embs_save_path, tabpfn_embs)

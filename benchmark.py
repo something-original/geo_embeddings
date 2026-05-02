@@ -1,19 +1,24 @@
+import logging
 import os
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import torch
-
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-
 from catboost import CatBoostRegressor
-from emb_fit.models import (
-    DeepGNN,
-    SatCLIP,
-    S2VecModel
+
+from config import (
+    CHECK_PEOPLE_WORKPLACES_TASKS,
+    EXPERIMENT_TARGET_FEATURES,
+    PEOPLE_FEATURES,
+    PEOPLE_CAT_FEATURES,
+    WORKPLACES_FEATURES,
+    WORKPLACES_CAT_FEATURES
 )
+
 from emb_fit import (
     get_dataloader,
     get_gnn_embeddings,
@@ -26,7 +31,17 @@ from emb_fit import (
     train_s2vec,
 )
 
-from tasks import FlatsTask, FNSTask
+from tasks import (
+    BaseTask,
+    FlatsTask,
+    FNSTask,
+    PeopleHousesTask,
+    WorkplacesDistrictsTask
+)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -34,9 +49,11 @@ root_dir = Path(__file__).resolve().parent
 
 flats_dataset_path = os.path.join(root_dir, 'datasets', 'flats', 'flats_merged.csv')
 fns_dataset_path = os.path.join(root_dir, 'datasets', 'fns')
-
+people_dataset_path = os.path.join(root_dir, 'datasets', 'people', 'building_people_dataset.csv')
+workplaces_dataset_path = os.path.join(root_dir, 'datasets', 'workplaces', 'workplaces_districts.csv')
 
 model = CatBoostRegressor()
+
 flats_task = FlatsTask(
     dataset_path=flats_dataset_path,
     features=[
@@ -72,7 +89,6 @@ fns_task_kkt = FNSTask(
     target_col='KktCount'
 )
 
-
 fns_task_avg_bill = FNSTask(
     dataset_path=fns_dataset_path,
     features=[
@@ -87,9 +103,35 @@ fns_task_avg_bill = FNSTask(
     target_col='AverageBill'
 )
 
-flats_task.prepare_dataset()
-fns_task_kkt.prepare_dataset()
-fns_task_avg_bill.prepare_dataset()
+tasks: list[BaseTask] = [flats_task, fns_task_kkt, fns_task_avg_bill]
+
+if CHECK_PEOPLE_WORKPLACES_TASKS:
+    people_task = PeopleHousesTask(
+        dataset_path=people_dataset_path,
+        features=PEOPLE_FEATURES,
+        target_col='people',
+        geom_col='geometry',
+        val_ratio=0.2,
+        model=model.copy(),
+        cat_features=PEOPLE_CAT_FEATURES
+    )
+
+    workplaces_task = WorkplacesDistrictsTask(
+        dataset_path=workplaces_dataset_path,
+        features=WORKPLACES_FEATURES,
+        target_col='workplaces',
+        geom_col='geometry',
+        val_ratio=0.2,
+        model=model.copy(),
+        cat_features=WORKPLACES_CAT_FEATURES
+    )
+    
+    tasks.extend([people_task, workplaces_task])
+    
+
+for task in tasks:
+    logger.info(f'Preparing dataset for task: {str(task)}')
+    task.prepare_dataset()
 
 
 features_to_drop = ['municipality_id']
@@ -99,11 +141,16 @@ path_parts = [root_dir, 'datasets', 'mun_data']
 dataset_path = os.path.join(*path_parts, 'indicator_values.csv')
 train_path = os.path.join(*path_parts, 'indicator_values_train.csv')
 val_path = os.path.join(*path_parts, 'indicator_values_val.csv')
+train_full_path = os.path.join(*path_parts, 'indicator_values_full.csv')
+indicators_path = os.path.join(*path_parts, 'base_indicators.csv')
 
-prepare_and_save_dataset(
+target_col_names, train_full_path = prepare_and_save_dataset(
     dataset_path=dataset_path,
+    indicators_path=indicators_path,
     features_to_drop=features_to_drop,
+    experiment_target_features=EXPERIMENT_TARGET_FEATURES,
     train_path=train_path,
+    train_full_path=train_full_path,
     val_path=val_path,
     csv_sep=';',
     use_scaler=True,
@@ -111,21 +158,83 @@ prepare_and_save_dataset(
     test_size=0.25,
 )
 
+
 X_train = pd.read_csv(train_path, sep=';')
 X_test = pd.read_csv(val_path, sep=';')
+X = pd.concat(X_train, X_test, ignore_index=True, axis=0)
 
-#TODO: выбор признаков кроме эмбеддингов для мун.образований
+target_cols = {}
+y_train = X_train[target_col_names[0]].copy()
+y_test = X_test[target_col_names[0]].copy()
+
+if len(target_col_names) > 1:
+    for col in target_col_names[1:]:
+        target_cols[f'{col}_train'] = X_train[col].copy()
+        target_cols[f'{col}_test'] = X_test[col].copy()
+    
+X_train.drop(columns=target_col_names, inplace=True)
+X_test.drop(columns=target_col_names, inplace=True)
+
+
+save_path_parts = [root_dir, 'emb_fit']
+deep_gnn_output_path = os.path.join(*save_path_parts, 'gnn')
+tabpfn_output_path = os.path.join(*save_path_parts, 'tab_pfn')
+s2vec_output_path = os.path.join(*save_path_parts, 's2vec')
+satclip_output_path = os.path.join(*save_path_parts, 'satclip')
 
 deep_gnn_model, deep_gnn_scaler = train_gnn(
     X_train=X_train,
-    y_train=None,
+    y_train=y_train,
     device=DEVICE,
-    y_test=None,
-    
+    X_test=X_test,
+    y_test=y_test,
+    output_path=deep_gnn_output_path,    
 )
-tabpfn_model, tabpfn_scaler = train_tabpfn()
-s2vec_model = train_s2vec()
-satclip_model = SatCLIP()
+tabpfn_model, tabpfn_scaler = train_tabpfn(
+    X_train=X_train,
+    y_train=y_train,
+    output_path=tabpfn_output_path,
+)
+s2vec_model = train_s2vec(
+    train_path=train_path,
+    val_path=val_path,
+    checkpoint_path=s2vec_output_path,
+    device=DEVICE,
+)
+
+deep_gnn_emb_save_path = os.path.join(deep_gnn_output_path, 'gnn_embs.npy')
+tabpfn_emb_save_path = os.path.join(tabpfn_output_path, 'tab_pfn_embs.npy')
+s2vec_emb_save_path = os.path.join(s2vec_output_path, 's2vec_embs_npy')
+satclip_emb_save_path = os.path.join(satclip_output_path, 'satclip_embs.npy')
+
+s2vec_data_loader = get_dataloader(
+    csv_path=train_full_path
+)
+
+get_gnn_embeddings(
+    model=deep_gnn_model,
+    X=X,
+    edge_index=None,
+    scaler=tabpfn_scaler,
+    device=DEVICE,
+    embs_save_path=deep_gnn_emb_save_path,
+)
+get_tabpfn_embeddings(
+    model=tabpfn_model,
+    X=X,
+    embs_save_path=tabpfn_emb_save_path,
+    scaler=tabpfn_scaler,
+)
+get_s2vec_embeddings(
+    model=s2vec_model,
+    loader=s2vec_data_loader,
+    enbs_save_path=s2vec_emb_save_path,
+)
+get_satclip_embeddings(
+    device=DEVICE,
+    output_path=satclip_emb_save_path
+)
+
 
 
 models_list = []

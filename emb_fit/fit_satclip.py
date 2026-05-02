@@ -8,8 +8,6 @@ SatCLIP - это модель, которая обучается сопоста�
 
 import numpy as np
 import torch
-import pandas as pd
-import os
 from pathlib import Path
 from typing import Union, List, Tuple
 from tqdm import tqdm
@@ -136,21 +134,3 @@ def get_satclip_embeddings(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(output_path, embeddings)
         print(f"Эмбеддинги сохранены: {output_path}")
-
-    return embeddings
-
-
-if __name__ == '__main__':
-    root_dir = Path(__file__).resolve().parent.parent
-    df_spb = load_dataset(Path(os.path.join(root_dir, 'datasets/spb_merged.csv')))
-    df_msk = load_dataset(Path(os.path.join(root_dir, 'datasets/moscow_merged.csv')))
-    df_ekb = load_dataset(Path(os.path.join(root_dir, 'datasets/ekb_merged.csv')))
-
-    cols = df_spb.columns
-    df_ekb = df_ekb[[col for col in cols if col in df_ekb.columns]]
-    df_msk = df_msk[[col for col in cols if col in df_msk.columns]]
-    df = pd.concat([df_spb, df_ekb, df_msk], axis=0)
-
-    coord_list = [(lat, lon,) for lat, lon in zip(df.lat, df.lng)]
-
-    get_satclip_embeddings(coord_list, output_path='satclip/satclip_embs.npy')

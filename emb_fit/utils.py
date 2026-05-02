@@ -73,8 +73,11 @@ def get_dataloader(csv_path, img_size=32, batch_size=64, num_workers=4, shuffle=
 
 def prepare_and_save_dataset(
     dataset_path: str,
+    indicators_path: str,
     features_to_drop: list[str],
+    experiment_target_features: list[str],
     train_path: str,
+    train_full_path: str,
     val_path: str,
     csv_sep: str = ';',
     id_col: str | None = None,
@@ -82,9 +85,11 @@ def prepare_and_save_dataset(
     scaler: StandardScaler | None = None,
     test_size: float = 0.25,
     nan_fill_threshold: float = 0.9,
-) -> None:
+) -> list[str]:
 
     df_full = pd.read_csv(dataset_path, sep=csv_sep)
+    df_base_indicators = pd.read_csv(indicators_path, sep=csv_sep)
+
     logger.info(f'Full dataset shape: {df_full.shape}')
     mask_all_nan = df_full.isna().all(axis=1)
 
@@ -107,6 +112,21 @@ def prepare_and_save_dataset(
     if cols_to_drop.any():
         print(f"Columns dropped with nan ratios: {list(cols_to_drop)}")
 
+    target_feature_col_names = []
+    
+    if experiment_target_features:
+        target_feature_ids = df_base_indicators[
+            df_base_indicators['name'].isin(experiment_target_features)
+        ]['id']
+
+        for id in target_feature_ids:
+            target_feature_col_name = f'target_{id}'
+            target_feature_col_names.append(target_feature_col_name)
+            id_cols = [col for col in df_full.columns if str(id) in col]
+            df_full[target_feature_col_name] = np.nansum(df_full[id_cols].values, axis=1)
+            df_full.drop(columns=id_cols, inplace=True)
+            
+
     df_train, df_val = train_test_split(df_full, test_size=test_size, random_state=42)
     logger.info(f'Train shape: {df_train.shape}')
     logger.info(f'Val shape: {df_val.shape}')
@@ -128,5 +148,9 @@ def prepare_and_save_dataset(
         df_train = pd.DataFrame(train_scaled_final)
         df_val = pd.DataFrame(val_scaled_final)
 
-    df_train.to_csv(train_path, sep=csv_sep, index=False)
-    df_val.to_csv(val_path, sep=csv_sep, index=False)
+    kwargs = {'sep': csv_sep, 'index': False}
+    df_train.to_csv(train_path, **kwargs)
+    df_val.to_csv(val_path, sep=csv_sep, **kwargs)
+    df_full.to_csv(train_full_path, **kwargs)
+
+    return target_feature_col_names

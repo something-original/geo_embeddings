@@ -87,7 +87,7 @@ def train_s2vec(
 def get_s2vec_embeddings(
     model: S2VecModel,
     loader: DataLoader,
-    save_path: str,
+    embs_save_path: str,
     device: str,
 ) -> None:
 
@@ -108,4 +108,4 @@ def get_s2vec_embeddings(
     final_embeddings = np.concatenate(embeddings_list, axis=0)
     print(f"Shape of resulting embeddings: {final_embeddings.shape}")
 
-    np.save(save_path, final_embeddings)
+    np.save(embs_save_path, final_embeddings)
