@@ -1,6 +1,7 @@
 import os
 from ast import literal_eval
 from dotenv import load_dotenv
+import torch
 
 load_dotenv()
 
@@ -20,3 +21,8 @@ EXPERIMENT_TARGET_FEATURES = [
     'Доходы местного бюджета, фактически исполненные',
     'Расходы местного бюджета, фактически исполненные'
 ]
+
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+BENCHMARK_LOG_PATH = "logs/models_tasks_performance.log"
+
+os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'

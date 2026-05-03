@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -78,6 +79,7 @@ def train_tabpfn(
         'max_train_samples': max_train_samples
     }
 
+    output_path = os.path.join(output_path, 'tabpfn.pkl')
     with open(output_path, 'wb') as f:
         pickle.dump(save_dict, f)
 
@@ -92,7 +94,7 @@ def get_tabpfn_embeddings(
     embs_save_path: str,
     batch_size: int = 10000,
     average_embeddings: bool = True,
-    scaler: Any | None = None,
+    feature_scaler: Any | None = None,
 ):
     """
     Генерирует эмбеддинги с помощью обученной TabPFN модели.
@@ -106,8 +108,16 @@ def get_tabpfn_embeddings(
     """
     if isinstance(X, np.ndarray):
         X = pd.DataFrame(X)
-    if scaler:
-        X = scaler.transform(X)
+    if feature_scaler is not None:
+        # Mirror preprocessing from `prepare_and_save_dataset`:
+        # - fill NaNs for scaler
+        # - transform
+        # - put sentinel -1.0 back where NaNs were originally
+        nan_mask = X.isnull()
+        X_filled = X.replace([np.inf, -np.inf], np.nan).fillna(X.median(numeric_only=True))
+        X_scaled = feature_scaler.transform(X_filled)
+        X_scaled = np.where(nan_mask.to_numpy(), -1.0, X_scaled)
+        X = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
 
     embeddings = []
 

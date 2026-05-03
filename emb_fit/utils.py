@@ -15,7 +15,14 @@ class TabularImageDataset(Dataset):
     """
     Датасет для преобразования табличных данных в 'изображения' для S2Vec.
     """
-    def __init__(self, csv_path, img_size=32, fill_value=-1.0, sep=';'):
+    def __init__(
+        self,
+        csv_path: str,
+        img_size: int = 32,
+        fill_value: float = -1.0,
+        sep: str = ';',
+        cols_to_drop: list[str] | None = None,
+    ):
         """
         Args:
             csv_path: Путь к CSV файлу.
@@ -27,8 +34,11 @@ class TabularImageDataset(Dataset):
         self.fill_value = fill_value
         self.total_pixels = img_size * img_size
         self.sep = sep
+        self.cols_to_drop = cols_to_drop
 
         self.df = pd.read_csv(csv_path, sep=self.sep)
+        if self.cols_to_drop:
+            self.df = self.df.drop(columns=self.cols_to_drop, errors='ignore')
         self.features = self.df.values.astype(np.float32)
 
         n_features = self.features.shape[1]
@@ -58,8 +68,19 @@ class TabularImageDataset(Dataset):
         return torch.tensor(image, dtype=torch.float32), torch.tensor(0)
 
 
-def get_dataloader(csv_path, img_size=32, batch_size=64, num_workers=4, shuffle=False):
-    dataset = TabularImageDataset(csv_path, img_size=img_size)
+def get_dataloader(
+    csv_path: str,
+    img_size: int = 32,
+    batch_size: int = 64,
+    num_workers: int = 4,
+    shuffle: bool = False,
+    cols_to_drop: list[str] | None = None
+):
+    dataset = TabularImageDataset(
+        csv_path,
+        img_size=img_size,
+        cols_to_drop=cols_to_drop,
+    )
 
     return DataLoader(
         dataset,
@@ -111,7 +132,7 @@ def prepare_and_save_dataset(
     cols_to_drop = nan_ratio[nan_ratio > nan_fill_threshold].index
     df_full = df_full.drop(columns=cols_to_drop)
     if cols_to_drop.any():
-        print(f"Columns dropped with nan ratios: {list(cols_to_drop)}")
+        print(f"Columns dropped with nan ratios: {len(list(cols_to_drop))}")
 
     target_feature_col_names = []
     
@@ -130,30 +151,47 @@ def prepare_and_save_dataset(
             df_full.drop(columns=id_cols, inplace=True)
             
 
-    df_full.set_index(index_feature)
+    df_full = df_full.set_index(index_feature)
 
     df_train, df_val = train_test_split(df_full, test_size=test_size, random_state=42)
     logger.info(f'Train shape: {df_train.shape}')
     logger.info(f'Val shape: {df_val.shape}')
 
     if use_scaler and scaler is not None:
+
+        original_targets_train = df_train[target_feature_col_names].copy()
+        original_targets_val = df_val[target_feature_col_names].copy()
+
+        df_train.drop(columns=target_feature_col_names, inplace=True)
+        df_val.drop(columns=target_feature_col_names, inplace=True)
+    
         df_train_for_scaler = df_train.fillna(df_train.median())
         df_val_for_scaler = df_val.fillna(df_val.median())
 
         train_scaled = pd.DataFrame(
-            scaler.fit_transform(df_train_for_scaler), columns=df_train.columns
+            scaler.fit_transform(df_train_for_scaler), 
+            columns=df_train.columns,
+            index=df_train.index
         )
         val_scaled = pd.DataFrame(
-            scaler.transform(df_val_for_scaler), columns=df_val.columns
+            scaler.transform(df_val_for_scaler), 
+            columns=df_val.columns,
+            index=df_val.index
         )
 
-        train_scaled_final = np.where(df_train.isnull(), -1.0, train_scaled.values)
-        val_scaled_final = np.where(df_val.isnull(), -1.0, val_scaled.values)
+        train_mask = df_train.isnull()
+        val_mask = df_val.isnull()
 
-        df_train = pd.DataFrame(train_scaled_final)
-        df_val = pd.DataFrame(val_scaled_final)
+        train_scaled_final = np.where(train_mask, -1.0, train_scaled.values)
+        val_scaled_final = np.where(val_mask, -1.0, val_scaled.values)
+    
+        df_train = pd.DataFrame(train_scaled_final, columns=df_train.columns, index=df_train.index)
+        df_val = pd.DataFrame(val_scaled_final, columns=df_val.columns, index=df_val.index)
 
-    kwargs = {'sep': csv_sep, 'index': False}
+        df_train[target_feature_col_names] = original_targets_train
+        df_val[target_feature_col_names] = original_targets_val
+
+    kwargs = {'sep': csv_sep, 'index': True}
     df_train.to_csv(train_path, **kwargs)
     df_val.to_csv(val_path, **kwargs)
     df_full.to_csv(train_full_path, **kwargs)

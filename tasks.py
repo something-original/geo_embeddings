@@ -11,7 +11,6 @@ from scipy.stats import pearsonr
 
 from pathlib import Path
 import os
-from catboost import CatBoostRegressor
 from shapely import Polygon, wkt
 
 

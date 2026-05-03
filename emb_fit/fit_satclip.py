@@ -13,6 +13,7 @@ from typing import Union, List, Tuple
 from tqdm import tqdm
 from huggingface_hub import hf_hub_download
 from .models.satclip.satclip.load import get_satclip
+from config import DEVICE
 
 
 def get_satclip_embeddings(
@@ -22,7 +23,7 @@ def get_satclip_embeddings(
     output_path: str = None,
     device: str = None,
     batch_size: int = 32
-) -> np.ndarray:
+) -> None:
     """
     Генерирует эмбеддинги SatCLIP для списка координат используя предобученную модель.
 
@@ -50,10 +51,8 @@ def get_satclip_embeddings(
         >>> print(embeddings.shape)  # (2, 512)
     """
     if device is None:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = DEVICE
         print(f'Device: {device}')
-
-    device = torch.device(device)
 
     # Конвертируем координаты в правильный формат
     if isinstance(coordinates, list):

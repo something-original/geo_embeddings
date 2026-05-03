@@ -13,6 +13,7 @@ def train_s2vec(
     val_path: str,
     checkpoint_path: str,
     device: str,
+    cols_to_drop: list[str] | None = None
 ) -> S2VecModel:
 
     IMG_SIZE = 128
@@ -28,13 +29,15 @@ def train_s2vec(
         train_path,
         img_size=IMG_SIZE,
         batch_size=BATCH_SIZE,
-        shuffle=True
+        shuffle=True,
+        cols_to_drop=cols_to_drop
     )
 
     val_loader = get_dataloader(
         val_path,
         img_size=IMG_SIZE,
-        batch_size=BATCH_SIZE
+        batch_size=BATCH_SIZE,
+        cols_to_drop=cols_to_drop
     )
 
     model = S2VecModel(

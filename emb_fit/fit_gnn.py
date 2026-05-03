@@ -1,14 +1,18 @@
+import os
+
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 
-from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import kneighbors_graph
+from sklearn.impute import SimpleImputer
+
 from torch_geometric.data import Data
 
 from emb_fit.models import DeepGNN
+from config import DEVICE
 
 
 def train_gnn(
@@ -147,6 +151,7 @@ def train_gnn(
         'n_neighbors': n_neighbors
     }
 
+    output_path = os.path.join(output_path, 'gnn.pt')
     torch.save(save_dict, output_path)
     print(f"Модель сохранена: {output_path}")
 
@@ -177,7 +182,7 @@ def get_gnn_embeddings(
         embeddings: numpy array с эмбеддингами формы (n_samples, hidden_channels)
     """
     if device is None:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = DEVICE
 
     if isinstance(X, np.ndarray):
         X = pd.DataFrame(X)
@@ -190,7 +195,10 @@ def get_gnn_embeddings(
 
     # Построение графа если не предоставлен
     if edge_index is None:
-        A = kneighbors_graph(X_scaled, n_neighbors=n_neighbors, mode='connectivity', include_self=False)
+        imputer = SimpleImputer(strategy='median')
+        X_imputed = imputer.fit_transform(X_scaled)
+        
+        A = kneighbors_graph(X_imputed, n_neighbors=n_neighbors, mode='connectivity', include_self=False)
         edge_index = torch.tensor(np.array(A.nonzero()), dtype=torch.long)
 
     # Конвертация в тензоры
@@ -202,4 +210,4 @@ def get_gnn_embeddings(
     with torch.no_grad():
         embeddings = model.get_embeddings(x_tensor, edge_index)
 
-    np.save(embs_save_path, embeddings)
+    np.save(embs_save_path, embeddings.cpu().numpy())
