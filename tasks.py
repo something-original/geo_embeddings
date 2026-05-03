@@ -131,7 +131,7 @@ class BaseTask(ABC):
             )
 
             y_pred_val = model_instance.predict(self.x_val)
-            val_rmse = root_mean_squared_error(self.y_val, y_pred_val, squared=False)
+            val_rmse = root_mean_squared_error(self.y_val, y_pred_val)
             return val_rmse
 
         study = optuna.create_study(direction="minimize")
@@ -143,7 +143,7 @@ class BaseTask(ABC):
 
         y_pred_test = best_model.predict(self.x_test)
 
-        rmse = root_mean_squared_error(self.y_test, y_pred_test, squared=False)
+        rmse = root_mean_squared_error(self.y_test, y_pred_test)
         mae = mean_absolute_error(self.y_test, y_pred_test)
         r2 = r2_score(self.y_test, y_pred_test)
         pearson_corr, _ = pearsonr(self.y_test, y_pred_test)
@@ -165,6 +165,17 @@ class BaseTask(ABC):
         dataset[self.geom_col] = (
             dataset[self.geom_col].set_crs(self.dataset_crs).to_crs(self.crs)
         )
+
+        for col in dataset.columns:
+            if dataset[col].nunique() == 1:
+                dataset.drop(columns=[col], inplace=True)
+                if col in self.features:
+                    self.features.remove(col)
+                if col in self.cat_features:
+                    self.cat_features.remove(col)
+        
+        if isinstance(dataset[self.target_col].iloc[0], str):
+            dataset[self.target_col] = dataset[self.target_col].apply(float)
 
         X = dataset[self.features + [self.geom_col]]
         y = dataset[self.target_col]

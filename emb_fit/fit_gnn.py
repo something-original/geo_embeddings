@@ -202,7 +202,7 @@ def get_gnn_embeddings(
         edge_index = torch.tensor(np.array(A.nonzero()), dtype=torch.long)
 
     # Конвертация в тензоры
-    x_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(device)
+    x_tensor = torch.tensor(X_imputed, dtype=torch.float32).to(device)
     edge_index = edge_index.to(device)
 
     # Генерация эмбеддингов

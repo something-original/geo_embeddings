@@ -68,7 +68,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
             'floorNumber', 'flatType', 'livingArea', 'windowsViewType', 'balconiesCount',
             'kitchenArea', 'isRecidivist', 'totalArea', 'hasLift', 'buildYear',
             'materialType' ,'distance_to_center', 'highways_count', 'undergrounds_count',
-            'railways_count', 'time_to_metro', 'price'
+            'railways_count', 'time_to_metro'
         ],
         geom_col='geometry',
         val_ratio=0.2,
@@ -76,7 +76,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
         target_col='price',
         dataset_crs='EPSG:3857',
         cat_features=[
-            'hasFurniture', 'isApartments', 'flatType',
+            'repairType', 'hasFurniture', 'isApartments', 'flatType',
             'isRecidivist', 'hasLift', 'materialType',
             'windowsViewType'
         ]
@@ -312,9 +312,7 @@ def generate_embeddings(
             dataset_path=municiplaities_path,
         ),
         device=DEVICE,
-        checkpoint_filename=os.path.join(
-            models_save_paths['satclip_output_path'], 'satclip-resnet18-l40.ckpt'
-        ),
+        checkpoint_filename='satclip-resnet18-l40.ckpt',
         output_path=emb_save_paths['satclip']
     )
 

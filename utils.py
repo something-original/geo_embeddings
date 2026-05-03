@@ -66,7 +66,8 @@ def prepare_mun_df(
     df[geom_col] = df[geom_col].apply(make_valid)
 
     df = gpd.GeoDataFrame(df).set_geometry(geom_col).set_crs('EPSG:4326')
-    
+    df['id'] = df['id'].apply(int)
+
     return df
     
 
@@ -96,9 +97,10 @@ def load_embeddings(
     embeddings[index_col_name] = index_col
     
     mun_df = prepare_mun_df(municipality_path, geom_col)
-    mun_df = mun_df[[index_col_name, geom_col]]
+    mun_df = mun_df[['id', geom_col]]
     
-    embeddings = embeddings.merge(mun_df, how='left', on=index_col_name)
+    embeddings = embeddings.merge(mun_df, how='left', left_on=index_col_name, right_on='id')
+    embeddings = embeddings[~embeddings['geometry'].isna()]
     embeddings = gpd.GeoDataFrame(embeddings).set_geometry(geom_col).set_crs('EPSG:4326')
     
     return embeddings
