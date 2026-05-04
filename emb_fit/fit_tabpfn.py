@@ -65,7 +65,7 @@ def train_tabpfn(
         device='cuda'
     )
     print("Начинаем обучение TabPFN...")
-    model.fit(X_train, y_train_scaled)
+    model.fit(X_train, y_train)
     print("Обучение завершено")
 
     # Сохраняем модель и scaler

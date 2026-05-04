@@ -1,5 +1,6 @@
 from abc import ABC
 from ast import literal_eval
+import logging
 from typing import Any
 
 import geopandas as gpd
@@ -12,6 +13,9 @@ from scipy.stats import pearsonr
 from pathlib import Path
 import os
 from shapely import Polygon, wkt
+
+
+logger = logging.getLogger(__name__)
 
 
 class BaseTask(ABC):
@@ -95,6 +99,10 @@ class BaseTask(ABC):
         self.x_train = self.x_train.sjoin(embeddings)
         self.x_val = self.x_val.sjoin(embeddings)
         self.x_test = self.x_test.sjoin(embeddings)
+        
+        self.x_train.drop(columns=['index_right'], inplace=True, errors='ignore')
+        self.x_val.drop(columns=['index_right'], inplace=True, errors='ignore')
+        self.x_test.drop(columns=['index_right'], inplace=True, errors='ignore')
 
         emb_col_set = set(embeddings.columns)
         emb_col_set.remove(emb_geom_col)
@@ -102,9 +110,24 @@ class BaseTask(ABC):
 
         self._drop_cols([self.geom_col])
 
+    def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
+        emb_cols = embeddings.columns
+        
+        self.x_train.drop(columns=emb_cols, inplace=True, errors='ignore')
+        self.x_val.drop(columns=emb_cols, inplace=True, errors='ignore')
+        self.x_test.drop(columns=emb_cols, inplace=True, errors='ignore')
+        
+        self.features = [f for f in self.features if f not in emb_cols]
+        self.cat_features = [f for f in self.cat_features if f not in emb_cols]
+        logger.info(f'Features after cleaning: {self.features}')
+    
     def train_and_eval_model(
         self, param_distributions: dict, n_trials: int = 100
     ) -> dict:
+        
+        logger.info(f'Number of features: {len(self.features)}')
+        logger.info(f'Features: {self.features}')
+
         def objective(trial):
             params = {}
             for param_name, param_range in param_distributions.items():
@@ -191,7 +214,7 @@ class FNSTask(BaseTask):
         root_dir = Path(__file__).resolve().parent
 
         os.chdir(os.path.join(root_dir, "parsers", "fns_parser"))
-        from parsers import start
+        from parsers.fns_parser.main import start
 
         save_path_level_10 = os.path.join(self.dataset_path, "fns_level_10.csv")
         os.makedirs(self.dataset_path, exist_ok=True)
@@ -208,8 +231,10 @@ class FNSTask(BaseTask):
             lambda x: Polygon(literal_eval(x)[0])
         )
         for col in df_fns.columns:
-            if isinstance(df_fns[col].iloc[0], str):
-                df_fns[col] = df_fns[col].apply(literal_eval)
+            if col != self.geom_col and col not in self.cat_features and df_fns[col].dtype == 'object':
+                df_fns[col] = df_fns[col].apply(
+                    lambda x: x if x != x else literal_eval(x)
+                )
             if col != self.geom_col and col not in self.cat_features:
                 df_fns[col] = df_fns[col].apply(
                     lambda x: x[0] if isinstance(x, list) else x

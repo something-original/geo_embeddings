@@ -1,1 +1,0 @@
-from .fns_parser.main import start

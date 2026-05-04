@@ -39,24 +39,20 @@ from tasks import (
 from utils import (
     get_geometry_points,
     load_embeddings,
-    PathBuilder
+    PathBuilder,
+    setup_logging
 )
 
 os.makedirs("logs", exist_ok=True)
-formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-
+setup_logging()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-file_handler = logging.FileHandler(BENCHMARK_LOG_PATH, mode='w', encoding="utf-8")
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
 
 model = CatBoostRegressor()
 
 
 def create_and_prepare_tasks() -> list[BaseTask]:
     logger.info('Start!')
+    logger.info(f'Using device: {DEVICE}')
     logger.info('Creating tasks')
 
     task_datasets_paths = PathBuilder.build_tasks_dataset_paths()
@@ -86,8 +82,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
         dataset_path=task_datasets_paths['fns_dataset_path'],
         features=[
             'CacheBillPercent', 'CachePayPercent', 'IntensityOfNumberBills', 'RevenueIntensity',
-            'IsMall', 'IsRare', 'IsEcommerce', 'TopCategories',
-            'ReceiptTotalCount'
+            'IsMall', 'IsRare', 'IsEcommerce', 'ReceiptTotalCount'
         ],
         cat_features=['IsMall', 'IsRare', 'IsEcommerce'],
         geom_col='coordinates',
@@ -100,8 +95,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
         dataset_path=task_datasets_paths['fns_dataset_path'],
         features=[
             'CacheBillPercent', 'CachePayPercent', 'IntensityOfNumberBills', 'RevenueIntensity',
-            'IsMall', 'IsRare', 'IsEcommerce', 'TopCategories',
-            'ReceiptTotalCount'
+            'IsMall', 'IsRare', 'IsEcommerce', 'ReceiptTotalCount'
         ],
         cat_features=['IsMall', 'IsRare', 'IsEcommerce'],
         geom_col='coordinates',
@@ -110,7 +104,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
         target_col='AverageBill'
     )
 
-    tasks: list[BaseTask] = [flats_task, fns_task_kkt, fns_task_avg_bill]
+    tasks: list[BaseTask] = [fns_task_kkt, flats_task, fns_task_avg_bill]
 
     if CHECK_PEOPLE_WORKPLACES_TASKS:
         people_task = PeopleHousesTask(
@@ -342,7 +336,7 @@ def check_tasks_performance(
         
         basic_results = task.train_and_eval_model(
             param_distributions=param_distributions,
-            n_trials=10
+            n_trials=1
         )
         
         logger.info(f'Basic results:\n {basic_results} \n')
@@ -359,9 +353,11 @@ def check_tasks_performance(
             
             emb_results = task.train_and_eval_model(
                 param_distributions=param_distributions,
-                n_trials=10            
+                n_trials=1     
             )
             logger.info(f'Results with embs from model {model}:\n {emb_results} \n')
+
+            task.clear_embeddings(embeddings)
             
         logger.info('-------------------')
 
@@ -375,6 +371,7 @@ if __name__ == '__main__':
         index_feature=index_feature
     )
 
+    """
     model_dict = train_embedding_models(
         dataset_dict=dataset_dict,
         index_feature=index_feature
@@ -386,7 +383,7 @@ if __name__ == '__main__':
         index_feature=index_feature,
         index_dict=index_dict,
         dataset_dict=dataset_dict
-    )
+    )"""
     
     check_tasks_performance(
         tasks=tasks,

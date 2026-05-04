@@ -1,5 +1,8 @@
+import logging
 import os
 from pathlib import Path
+
+from config import BENCHMARK_LOG_PATH
 
 import geopandas as gpd
 import numpy as np
@@ -53,8 +56,8 @@ class PathBuilder:
         return {
             'gnn': os.path.join(models_save_paths['deep_gnn_output_path'], 'gnn_embs.npy'),
             'tabpfn': os.path.join(models_save_paths['tabpfn_output_path'], 'tab_pfn_embs.npy'),
-            's2vec': os.path.join(models_save_paths['s2vec_output_path'], 's2vec_embs_npy'),
-            'satclip':os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs.npy')
+            's2vec': os.path.join(models_save_paths['s2vec_output_path'], 's2vec_embs.npy'),
+            'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs.npy')
         }
 
 def prepare_mun_df(
@@ -103,5 +106,42 @@ def load_embeddings(
     embeddings = embeddings[~embeddings['geometry'].isna()]
     embeddings = gpd.GeoDataFrame(embeddings).set_geometry(geom_col).set_crs('EPSG:4326')
     
+    embeddings = embeddings.drop_duplicates(subset=[index_col_name])
+    embeddings.drop(columns=[ 'municipality_id', 'id'], inplace=True, errors='ignore')
+
     return embeddings
-    
+
+
+def setup_logging():
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    log_path = Path(BENCHMARK_LOG_PATH)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    formatter = logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s]: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    if any(
+        isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == str(log_path)
+        for h in root_logger.handlers
+    ):
+        return
+
+    for h in list(root_logger.handlers):
+        if isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", None) == str(log_path):
+            root_logger.removeHandler(h)
+            try:
+                h.close()
+            except Exception:
+                pass
+
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    root_logger.addHandler(stream_handler)

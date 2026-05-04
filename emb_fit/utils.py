@@ -7,7 +7,6 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +25,7 @@ class TabularImageDataset(Dataset):
         """
         Args:
             csv_path: Путь к CSV файлу.
-            img_size: Размер стороны квадратного 'изображения' (H и W). 
+            img_size: Размер стороны квадратного 'изображения' (H и W).
                       Общее кол-во признаков должно быть <= img_size**2.
             fill_value: Значение, которым заполняются NaN и недостающие признаки.
         """
@@ -120,7 +119,7 @@ def prepare_and_save_dataset(
         logger.info(f'Dropped ids: {dropped_ids}')
 
     df_full.drop(columns=features_to_drop, inplace=True, errors='ignore')
-    df_full = df_full[~mask_all_nan].reset_index(drop=True)    
+    df_full = df_full[~mask_all_nan].reset_index(drop=True)
     df_full = df_full.select_dtypes(include=[np.number])
     logger.info(f'Shape after dropping: {df_full.shape}')
 
@@ -135,7 +134,7 @@ def prepare_and_save_dataset(
         print(f"Columns dropped with nan ratios: {len(list(cols_to_drop))}")
 
     target_feature_col_names = []
-    
+
     if experiment_target_features:
         logger.info(f'Target features: {experiment_target_features}')
 
@@ -149,7 +148,7 @@ def prepare_and_save_dataset(
             id_cols = [col for col in df_full.columns if str(id) in col]
             df_full[target_feature_col_name] = np.nansum(df_full[id_cols].values, axis=1)
             df_full.drop(columns=id_cols, inplace=True)
-            
+
 
     df_full = df_full.set_index(index_feature)
 
@@ -164,17 +163,17 @@ def prepare_and_save_dataset(
 
         df_train.drop(columns=target_feature_col_names, inplace=True)
         df_val.drop(columns=target_feature_col_names, inplace=True)
-    
+
         df_train_for_scaler = df_train.fillna(df_train.median())
         df_val_for_scaler = df_val.fillna(df_val.median())
 
         train_scaled = pd.DataFrame(
-            scaler.fit_transform(df_train_for_scaler), 
+            scaler.fit_transform(df_train_for_scaler),
             columns=df_train.columns,
             index=df_train.index
         )
         val_scaled = pd.DataFrame(
-            scaler.transform(df_val_for_scaler), 
+            scaler.transform(df_val_for_scaler),
             columns=df_val.columns,
             index=df_val.index
         )
@@ -184,7 +183,7 @@ def prepare_and_save_dataset(
 
         train_scaled_final = np.where(train_mask, -1.0, train_scaled.values)
         val_scaled_final = np.where(val_mask, -1.0, val_scaled.values)
-    
+
         df_train = pd.DataFrame(train_scaled_final, columns=df_train.columns, index=df_train.index)
         df_val = pd.DataFrame(val_scaled_final, columns=df_val.columns, index=df_val.index)
 
