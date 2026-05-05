@@ -1,5 +1,6 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from ast import literal_eval
+import logging
 from typing import Any
 
 import geopandas as gpd
@@ -11,11 +12,15 @@ from scipy.stats import pearsonr
 
 from pathlib import Path
 import os
-from catboost import CatBoostRegressor
 from shapely import Polygon, wkt
 
 
+logger = logging.getLogger(__name__)
+
+
 class BaseTask(ABC):
+    task_name: str = "BaseTask"
+
     def __init__(
         self,
         dataset_path: str,
@@ -25,7 +30,7 @@ class BaseTask(ABC):
         val_ratio: float,
         model: Any,
         dataset_link: str | None = None,
-        dataset_crs: str = 'EPSG:4326',
+        dataset_crs: str = "EPSG:4326",
         cat_features: list[str] = [],
     ):
         super().__init__()
@@ -48,26 +53,39 @@ class BaseTask(ABC):
         self.x_test_geom: gpd.GeoSeries = None
 
         self.dataset_crs = dataset_crs
-        self.crs = 'EPSG:4326'
+        self.crs = "EPSG:4326"
         self.cat_features = cat_features
 
-    @abstractmethod
-    def _load_dataset(self) -> tuple[Any, Any]:
-        pass
+        self._X_full: gpd.GeoDataFrame | None = None
+        self._y_full: pd.Series | None = None
+
+        self._initial_split_index: dict[str, pd.Index] | None = None
+
+
+    def __str__(self) -> str:
+        return self.task_name
 
     def _drop_cols(self, columns: list[str]) -> None:
         self.x_train = self.x_train.drop(columns=columns)
         self.x_val = self.x_val.drop(columns=columns)
-        self.x_test = self.x_test.drop(columns=columns)       
+        self.x_test = self.x_test.drop(columns=columns)
 
     def prepare_dataset(self) -> None:
         X, y = self._load_dataset()
-        self.x_train, self.x_val, self.y_train, self.y_val = train_test_split(
-            X, y, test_size=self.val_ratio, random_state=42
-        )
-        self.x_val, self.x_test, self.y_val, self.y_test = train_test_split(
-            self.x_val, self.y_val, test_size=0.5, random_state=42
-        )
+        
+        not_nan_index = y[~y.isna()].index
+        X = X[X.index.isin(not_nan_index)]
+        y = y[y.index.isin(not_nan_index)]
+        
+        self._X_full = X.copy()
+        self._y_full = y.copy()
+
+        self._set_splits_from_xy(X, y)
+        self._initial_split_index = {
+            "train": self.x_train.index.copy(),
+            "val": self.x_val.index.copy(),
+            "test": self.x_test.index.copy(),
+        }
 
         self.x_train_geom = self.x_train[self.geom_col]
         self.x_val_geom = self.x_val[self.geom_col]
@@ -75,31 +93,128 @@ class BaseTask(ABC):
 
         self._drop_cols([self.geom_col])
 
-    def add_embeddings(
+    def _set_splits_from_xy(self, X: gpd.GeoDataFrame, y: pd.Series) -> None:
+        self.x_train, self.x_val, self.y_train, self.y_val = train_test_split(
+            X, y, test_size=self.val_ratio, random_state=42
+        )
+        self.x_val, self.x_test, self.y_val, self.y_test = train_test_split(
+            self.x_val, self.y_val, test_size=0.5, random_state=42
+        )
+
+    def reset_splits(self) -> None:
+        if self._X_full is None or self._y_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+        if not self._initial_split_index:
+            raise RuntimeError("Initial split cache is missing.")
+
+        X = self._X_full
+        y = self._y_full
+        self.x_train = X.loc[self._initial_split_index["train"]]
+        self.y_train = y.loc[self._initial_split_index["train"]]
+        self.x_val = X.loc[self._initial_split_index["val"]]
+        self.y_val = y.loc[self._initial_split_index["val"]]
+        self.x_test = X.loc[self._initial_split_index["test"]]
+        self.y_test = y.loc[self._initial_split_index["test"]]
+
+        self.x_train_geom = self.x_train[self.geom_col]
+        self.x_val_geom = self.x_val[self.geom_col]
+        self.x_test_geom = self.x_test[self.geom_col]
+        self._drop_cols([self.geom_col])
+
+    def resplit_on_index(self, row_index: pd.Index | list) -> None:
+        """
+        Rebuild train/val/test on a subset of the full dataset (used to align
+        baseline splits with rows that have embeddings).
+        """
+        if self._X_full is None or self._y_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+
+        X = self._X_full.loc[row_index]
+        y = self._y_full.loc[row_index]
+        self._set_splits_from_xy(X, y)
+
+        self.x_train_geom = self.x_train[self.geom_col]
+        self.x_val_geom = self.x_val[self.geom_col]
+        self.x_test_geom = self.x_test[self.geom_col]
+        self._drop_cols([self.geom_col])
+
+    def get_index_with_embeddings(
         self,
         embeddings: gpd.GeoDataFrame,
-        emb_geom_col: str
-    ) -> None:
+        emb_geom_col: str,
+    ) -> pd.Index:
+        if self._X_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+
+        Xg = (
+            gpd.GeoDataFrame(self._X_full.copy())
+            .set_geometry(self.geom_col)
+            .set_crs(self.crs)
+        )
+
+        joined = Xg.sjoin(embeddings, how="left")
+        joined = joined[~joined.index.duplicated(keep='first')]
+        joined = joined.drop(columns=["index_right"], errors="ignore")
+
+        emb_cols = [c for c in embeddings.columns if c != emb_geom_col]
+        if not emb_cols:
+            raise ValueError("Embeddings dataframe has no feature columns")
+
+        valid_mask = joined[emb_cols].notna().any(axis=1)
+        return joined.index[valid_mask]
+
+    def add_embeddings(self, embeddings: gpd.GeoDataFrame, emb_geom_col: str) -> None:
 
         self.x_train[self.geom_col] = self.x_train_geom
         self.x_val[self.geom_col] = self.x_val_geom
         self.x_test[self.geom_col] = self.x_test_geom
 
-        self.x_train = gpd.GeoDataFrame(self.x_train).set_geometry(self.geom_col).set_crs(self.crs)
-        self.x_val = gpd.GeoDataFrame(self.x_val).set_geometry(self.geom_col).set_crs(self.crs)
-        self.x_test = gpd.GeoDataFrame(self.x_test).set_geometry(self.geom_col).set_crs(self.crs)
+        self.x_train = (
+            gpd.GeoDataFrame(self.x_train).set_geometry(self.geom_col).set_crs(self.crs)
+        )
+        self.x_val = (
+            gpd.GeoDataFrame(self.x_val).set_geometry(self.geom_col).set_crs(self.crs)
+        )
+        self.x_test = (
+            gpd.GeoDataFrame(self.x_test).set_geometry(self.geom_col).set_crs(self.crs)
+        )
 
-        self.x_train = self.x_train.sjoin(embeddings)
-        self.x_val = self.x_val.sjoin(embeddings)
-        self.x_test = self.x_test.sjoin(embeddings)
+        self.x_train = self.x_train.sjoin(embeddings, how='left')
+        self.x_val = self.x_val.sjoin(embeddings, how='left')
+        self.x_test = self.x_test.sjoin(embeddings, how='left')
+        
+        self.x_train = self.x_train[~self.x_train.index.duplicated(keep='first')]
+        self.x_val = self.x_val[~self.x_val.index.duplicated(keep='first')]
+        self.x_test = self.x_test[~self.x_test.index.duplicated(keep='first')]
+        
+        self.x_train.drop(columns=['index_right'], inplace=True, errors='ignore')
+        self.x_val.drop(columns=['index_right'], inplace=True, errors='ignore')
+        self.x_test.drop(columns=['index_right'], inplace=True, errors='ignore')
 
         emb_col_set = set(embeddings.columns)
         emb_col_set.remove(emb_geom_col)
         self.features.extend(list(emb_col_set))
 
-        self._drop_cols([self.geom_col])    
+        self._drop_cols([self.geom_col])
 
-    def train_and_eval_model(self, param_distributions: dict, n_trials: int = 100) -> dict:
+    def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
+        emb_cols = embeddings.columns
+        
+        self.x_train.drop(columns=emb_cols, inplace=True, errors='ignore')
+        self.x_val.drop(columns=emb_cols, inplace=True, errors='ignore')
+        self.x_test.drop(columns=emb_cols, inplace=True, errors='ignore')
+        
+        self.features = [f for f in self.features if f not in emb_cols]
+        self.cat_features = [f for f in self.cat_features if f not in emb_cols]
+        logger.info(f'Features after cleaning: {self.features}')
+    
+    def train_and_eval_model(
+        self, param_distributions: dict, n_trials: int = 100
+    ) -> dict:
+        
+        logger.info(f'Number of features: {len(self.features)}')
+        logger.info(f'Features: {self.features}')
+
         def objective(trial):
             params = {}
             for param_name, param_range in param_distributions.items():
@@ -110,19 +225,23 @@ class BaseTask(ABC):
                     else:
                         params[param_name] = trial.suggest_float(param_name, low, high)
                 elif isinstance(param_range, list):
-                    params[param_name] = trial.suggest_categorical(param_name, param_range)
+                    params[param_name] = trial.suggest_categorical(
+                        param_name, param_range
+                    )
                 else:
-                    raise ValueError(f"Unsupported parameter range format for {param_name}")
+                    raise ValueError(
+                        f"Unsupported parameter range format for {param_name}"
+                    )
 
-            model_instance = self.model.__class__(**{**self.model.get_params(), **params})
+            model_instance = self.model.__class__(
+                **{**self.model.get_params(), **params}
+            )
             model_instance.fit(
-                self.x_train,
-                self.y_train,
-                cat_features=self.cat_features
+                self.x_train, self.y_train, cat_features=self.cat_features
             )
 
             y_pred_val = model_instance.predict(self.x_val)
-            val_rmse = root_mean_squared_error(self.y_val, y_pred_val, squared=False)
+            val_rmse = root_mean_squared_error(self.y_val, y_pred_val)
             return val_rmse
 
         study = optuna.create_study(direction="minimize")
@@ -130,15 +249,11 @@ class BaseTask(ABC):
 
         best_params = study.best_params
         best_model = self.model.__class__(**{**self.model.get_params(), **best_params})
-        best_model.fit(
-            self.x_train,
-            self.y_train,
-            cat_features=self.cat_features
-        )
+        best_model.fit(self.x_train, self.y_train, cat_features=self.cat_features)
 
         y_pred_test = best_model.predict(self.x_test)
 
-        rmse = root_mean_squared_error(self.y_test, y_pred_test, squared=False)
+        rmse = root_mean_squared_error(self.y_test, y_pred_test)
         mae = mean_absolute_error(self.y_test, y_pred_test)
         r2 = r2_score(self.y_test, y_pred_test)
         pearson_corr, _ = pearsonr(self.y_test, y_pred_test)
@@ -148,19 +263,29 @@ class BaseTask(ABC):
             "MAE": mae,
             "R2": r2,
             "Pearson Correlation": pearson_corr,
-            "Best Params": best_params
+            "Best Params": best_params,
         }
 
-
-class FlatsTask(BaseTask):
     def _load_dataset(self):
         dataset = gpd.read_file(self.dataset_path)
         if isinstance(dataset[self.geom_col].iloc[0], str):
             dataset[self.geom_col] = dataset[self.geom_col].apply(wkt.loads)
 
         dataset = gpd.GeoDataFrame(dataset).set_geometry(self.geom_col)
-        dataset[self.geom_col] = dataset[self.geom_col]\
-            .set_crs(self.dataset_crs).to_crs(self.crs)
+        dataset[self.geom_col] = (
+            dataset[self.geom_col].set_crs(self.dataset_crs).to_crs(self.crs)
+        )
+
+        for col in dataset.columns:
+            if dataset[col].nunique() == 1:
+                dataset.drop(columns=[col], inplace=True)
+                if col in self.features:
+                    self.features.remove(col)
+                if col in self.cat_features:
+                    self.cat_features.remove(col)
+        
+        if isinstance(dataset[self.target_col].iloc[0], str):
+            dataset[self.target_col] = dataset[self.target_col].apply(float)
 
         X = dataset[self.features + [self.geom_col]]
         y = dataset[self.target_col]
@@ -169,14 +294,16 @@ class FlatsTask(BaseTask):
 
 
 class FNSTask(BaseTask):
+    task_name = "FNS Task"
+
     def _load_dataset(self):
         cwd = os.getcwd()
         root_dir = Path(__file__).resolve().parent
 
-        os.chdir(os.path.join(root_dir, 'parsers', 'fns_parser'))
-        from parsers import start
+        os.chdir(os.path.join(root_dir, "parsers", "fns_parser"))
+        from parsers.fns_parser.main import start
 
-        save_path_level_10 = os.path.join(self.dataset_path, 'fns_level_10.csv')
+        save_path_level_10 = os.path.join(self.dataset_path, "fns_level_10.csv")
         os.makedirs(self.dataset_path, exist_ok=True)
 
         if not os.path.exists(save_path_level_10):
@@ -184,15 +311,21 @@ class FNSTask(BaseTask):
 
         os.chdir(cwd)
 
-        df_fns = pd.read_csv(save_path_level_10, encoding='utf-8')
+        df_fns = pd.read_csv(save_path_level_10, encoding="utf-8")
         df_fns = df_fns[self.features + [self.geom_col, self.target_col]]
 
-        df_fns[self.geom_col] = df_fns[self.geom_col].apply(lambda x: Polygon(literal_eval(x)[0]))
+        df_fns[self.geom_col] = df_fns[self.geom_col].apply(
+            lambda x: Polygon(literal_eval(x)[0])
+        )
         for col in df_fns.columns:
-            if isinstance(df_fns[col].iloc[0], str):
-                df_fns[col] = df_fns[col].apply(literal_eval)
+            if col != self.geom_col and col not in self.cat_features and df_fns[col].dtype == 'object':
+                df_fns[col] = df_fns[col].apply(
+                    lambda x: x if x != x else literal_eval(x)
+                )
             if col != self.geom_col and col not in self.cat_features:
-                df_fns[col] = df_fns[col].apply(lambda x: x[0] if isinstance(x, list) else x)
+                df_fns[col] = df_fns[col].apply(
+                    lambda x: x[0] if isinstance(x, list) else x
+                )
 
         X = df_fns[self.features + [self.geom_col]]
         y = df_fns[self.target_col]
@@ -200,50 +333,11 @@ class FNSTask(BaseTask):
         return X, y
 
 
-if __name__ == '__main__':
-    from pathlib import Path
-    root_dir = Path(__file__).resolve().parent
+class FlatsTask(BaseTask):
+    task_name = "Flats price prediciton"
 
-    flats_dataset_path = os.path.join(root_dir, 'datasets', 'flats', 'flats_merged.csv')
+class PeopleHousesTask(BaseTask):
+    task_name = "Population prediction"
 
-    model = CatBoostRegressor()
-    flats_task = FlatsTask(
-        dataset_path=flats_dataset_path,
-        features=[
-            'dealType', 'roomsCount', 'repairType', 'hasFurniture', 'isApartments',
-            'floorNumber', 'flatType', 'livingArea', 'windowsViewType', 'balconiesCount',
-            'kitchenArea', 'isRecidivist', 'totalArea', 'hasLift', 'buildYear',
-            'materialType' ,'distance_to_center', 'highways_count', 'undergrounds_count',
-            'railways_count', 'time_to_metro', 'price'
-        ],
-        geom_col='geometry',
-        val_ratio=0.2,
-        model=model.copy(),
-        target_col='price',
-        dataset_crs='EPSG:3857',
-        cat_features=[
-            'hasFurniture', 'isApartments', 'flatType',
-            'isRecidivist', 'hasLift', 'materialType',
-            'windowsViewType'
-        ]
-    )
-
-    flats_task.prepare_dataset()
-
-    fns_dataset_path = os.path.join(root_dir, 'datasets', 'fns')
-
-    fns_task = FNSTask(
-        dataset_path=fns_dataset_path,
-        features=[
-            'CacheBillPercent', 'CachePayPercent', 'IntensityOfNumberBills', 'RevenueIntensity',
-            'IsMall', 'IsRare', 'IsEcommerce', 'TopCategories',
-            'ReceiptTotalCount'
-        ],
-        cat_features=['IsMall', 'IsRare', 'IsEcommerce'],
-        geom_col='coordinates',
-        val_ratio=0.2,
-        model=model.copy(),
-        target_col='KktCount'
-    )
-
-    fns_task.prepare_dataset()
+class WorkplacesDistrictsTask(BaseTask):
+    task_name = "Workplaces prediction"

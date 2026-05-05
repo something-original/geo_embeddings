@@ -8,13 +8,12 @@ SatCLIP - это модель, которая обучается сопоста�
 
 import numpy as np
 import torch
-import pandas as pd
-import os
 from pathlib import Path
 from typing import Union, List, Tuple
 from tqdm import tqdm
 from huggingface_hub import hf_hub_download
-from models.satclip.satclip.load import get_satclip
+from .models.satclip.satclip.load import get_satclip
+from config import DEVICE
 
 
 def get_satclip_embeddings(
@@ -24,7 +23,7 @@ def get_satclip_embeddings(
     output_path: str = None,
     device: str = None,
     batch_size: int = 32
-) -> np.ndarray:
+) -> None:
     """
     Генерирует эмбеддинги SatCLIP для списка координат используя предобученную модель.
 
@@ -52,10 +51,8 @@ def get_satclip_embeddings(
         >>> print(embeddings.shape)  # (2, 512)
     """
     if device is None:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = DEVICE
         print(f'Device: {device}')
-
-    device = torch.device(device)
 
     # Конвертируем координаты в правильный формат
     if isinstance(coordinates, list):
@@ -136,21 +133,3 @@ def get_satclip_embeddings(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(output_path, embeddings)
         print(f"Эмбеддинги сохранены: {output_path}")
-
-    return embeddings
-
-
-if __name__ == '__main__':
-    root_dir = Path(__file__).resolve().parent.parent
-    df_spb = load_dataset(Path(os.path.join(root_dir, 'datasets/spb_merged.csv')))
-    df_msk = load_dataset(Path(os.path.join(root_dir, 'datasets/moscow_merged.csv')))
-    df_ekb = load_dataset(Path(os.path.join(root_dir, 'datasets/ekb_merged.csv')))
-
-    cols = df_spb.columns
-    df_ekb = df_ekb[[col for col in cols if col in df_ekb.columns]]
-    df_msk = df_msk[[col for col in cols if col in df_msk.columns]]
-    df = pd.concat([df_spb, df_ekb, df_msk], axis=0)
-
-    coord_list = [(lat, lon,) for lat, lon in zip(df.lat, df.lng)]
-
-    get_satclip_embeddings(coord_list, output_path='satclip/satclip_embs.npy')

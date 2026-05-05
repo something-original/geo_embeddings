@@ -3,10 +3,10 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
 from tabpfn import TabPFNRegressor
 from tqdm import tqdm
 import pickle
+from typing import Any
 
 
 def train_tabpfn(
@@ -65,7 +65,7 @@ def train_tabpfn(
         device='cuda'
     )
     print("Начинаем обучение TabPFN...")
-    model.fit(X_train, y_train_scaled)
+    model.fit(X_train, y_train)
     print("Обучение завершено")
 
     # Сохраняем модель и scaler
@@ -79,6 +79,7 @@ def train_tabpfn(
         'max_train_samples': max_train_samples
     }
 
+    output_path = os.path.join(output_path, 'tabpfn.pkl')
     with open(output_path, 'wb') as f:
         pickle.dump(save_dict, f)
 
@@ -90,8 +91,10 @@ def train_tabpfn(
 def get_tabpfn_embeddings(
     model,
     X,
+    embs_save_path: str,
     batch_size: int = 10000,
-    average_embeddings: bool = True
+    average_embeddings: bool = True,
+    feature_scaler: Any | None = None,
 ):
     """
     Генерирует эмбеддинги с помощью обученной TabPFN модели.
@@ -102,11 +105,19 @@ def get_tabpfn_embeddings(
         batch_size: Размер батча для обработки
         average_embeddings: Если True, усредняет эмбеддинги по батчам
 
-    Returns:
-        embeddings: numpy array с эмбеддингами формы (n_samples, embedding_dim)
     """
     if isinstance(X, np.ndarray):
         X = pd.DataFrame(X)
+    if feature_scaler is not None:
+        # Mirror preprocessing from `prepare_and_save_dataset`:
+        # - fill NaNs for scaler
+        # - transform
+        # - put sentinel -1.0 back where NaNs were originally
+        nan_mask = X.isnull()
+        X_filled = X.replace([np.inf, -np.inf], np.nan).fillna(X.median(numeric_only=True))
+        X_scaled = feature_scaler.transform(X_filled)
+        X_scaled = np.where(nan_mask.to_numpy(), -1.0, X_scaled)
+        X = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
 
     embeddings = []
 
@@ -123,40 +134,5 @@ def get_tabpfn_embeddings(
             embeddings.append(batch_embeds)
 
     if embeddings:
-        return np.vstack(embeddings)
-    else:
-        return np.array([])
-
-
-if __name__ == '__main__':
-    root_dir = Path(__file__).resolve().parent.parent
-    df_spb = load_dataset(Path(os.path.join(root_dir, 'datasets/spb_merged.csv')))
-    df_msk = load_dataset(Path(os.path.join(root_dir, 'datasets/moscow_merged.csv')))
-    df_ekb = load_dataset(Path(os.path.join(root_dir, 'datasets/ekb_merged.csv')))
-
-    cols = df_spb.columns
-    df_ekb = df_ekb[[col for col in cols if col in df_ekb.columns]]
-    df_msk = df_msk[[col for col in cols if col in df_msk.columns]]
-    df = pd.concat([df_spb, df_ekb, df_msk], axis=0)
-
-    feature_start_index = df.columns.get_loc('mun_district')
-
-    X = df.iloc[:, feature_start_index + 1:]
-    y = df['price']
-
-    X = X.reset_index().drop(columns=['index'])
-    y = y.reset_index().drop(columns=['index'])
-
-    X = X.dropna()
-    y = y[y.index.isin(X.index)]
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, shuffle=True, random_state=42, train_size=0.7
-    )
-
-    out_path = os.path.join(root_dir, "emb_fit/tab_pfn/tabpfn_model.pkl")
-    model, scaler = train_tabpfn(X_train, y_train['price'], output_path=out_path)
-    tabpfn_embs = get_tabpfn_embeddings(model, X_test)
-
-    np.save(os.path.join(root_dir, 'emb_fit/tab_pfn/tab_pfn_embs.npy'), tabpfn_embs)
-    np.save(os.path.join(root_dir, 'emb_fit/x_test_index.npy'), X_test.index.to_numpy())
+        tabpfn_embs = np.vstack(embeddings)
+        np.save(embs_save_path, tabpfn_embs)

@@ -1,22 +1,18 @@
+import os
+
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-import os
-import sys
 
-from pathlib import Path
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 from sklearn.neighbors import kneighbors_graph
+from sklearn.impute import SimpleImputer
+
 from torch_geometric.data import Data
 
-project_root = Path(__file__).resolve().parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 from emb_fit.models import DeepGNN
-from emb_fit.utils import load_dataset
+from config import DEVICE
 
 
 def train_gnn(
@@ -141,10 +137,6 @@ def train_gnn(
 
     print("Обучение завершено")
 
-    # Сохранение модели
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     save_dict = {
         'model_state_dict': model.state_dict(),
         'model_config': {
@@ -159,6 +151,7 @@ def train_gnn(
         'n_neighbors': n_neighbors
     }
 
+    output_path = os.path.join(output_path, 'gnn.pt')
     torch.save(save_dict, output_path)
     print(f"Модель сохранена: {output_path}")
 
@@ -168,10 +161,11 @@ def train_gnn(
 def get_gnn_embeddings(
     model,
     X,
+    embs_save_path: str,
     edge_index=None,
     scaler=None,
     n_neighbors: int = 10,
-    device: str = None
+    device: str = None,
 ):
     """
     Генерирует эмбеддинги с помощью обученной GNN модели.
@@ -188,7 +182,7 @@ def get_gnn_embeddings(
         embeddings: numpy array с эмбеддингами формы (n_samples, hidden_channels)
     """
     if device is None:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = DEVICE
 
     if isinstance(X, np.ndarray):
         X = pd.DataFrame(X)
@@ -201,11 +195,14 @@ def get_gnn_embeddings(
 
     # Построение графа если не предоставлен
     if edge_index is None:
-        A = kneighbors_graph(X_scaled, n_neighbors=n_neighbors, mode='connectivity', include_self=False)
+        imputer = SimpleImputer(strategy='median')
+        X_imputed = imputer.fit_transform(X_scaled)
+        
+        A = kneighbors_graph(X_imputed, n_neighbors=n_neighbors, mode='connectivity', include_self=False)
         edge_index = torch.tensor(np.array(A.nonzero()), dtype=torch.long)
 
     # Конвертация в тензоры
-    x_tensor = torch.tensor(X_scaled, dtype=torch.float32).to(device)
+    x_tensor = torch.tensor(X_imputed, dtype=torch.float32).to(device)
     edge_index = edge_index.to(device)
 
     # Генерация эмбеддингов
@@ -213,37 +210,4 @@ def get_gnn_embeddings(
     with torch.no_grad():
         embeddings = model.get_embeddings(x_tensor, edge_index)
 
-    return embeddings.cpu().numpy()
-
-
-if __name__ == '__main__':
-    root_dir = Path(__file__).resolve().parent.parent
-    df_spb = load_dataset(Path(os.path.join(root_dir, 'datasets/spb_merged.csv')))
-    df_msk = load_dataset(Path(os.path.join(root_dir, 'datasets/moscow_merged.csv')))
-    df_ekb = load_dataset(Path(os.path.join(root_dir, 'datasets/ekb_merged.csv')))
-
-    cols = df_spb.columns
-    df_ekb = df_ekb[[col for col in cols if col in df_ekb.columns]]
-    df_msk = df_msk[[col for col in cols if col in df_msk.columns]]
-    df = pd.concat([df_spb, df_ekb, df_msk], axis=0)
-
-    feature_start_index = df.columns.get_loc('mun_district')
-
-    X = df.iloc[:, feature_start_index + 1:]
-    y = df['price']
-
-    X = X.reset_index().drop(columns=['index'])
-    y = y.reset_index().drop(columns=['index'])
-
-    X = X.dropna()
-    y = y[y.index.isin(X.index)]
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, shuffle=True, random_state=42, train_size=0.7
-    )
-
-    model, scaler = train_gnn(X_train, y_train['price'], X_test, y_test['price'])
-    gnn_embs = get_gnn_embeddings(model, X_test)
-
-    np.save(os.path.join(root_dir, 'emb_fit/gnn/gnn_embs.npy'), gnn_embs)
-    np.save(os.path.join(root_dir, 'emb_fit/x_test_index.npy'), X_test.index.to_numpy())
+    np.save(embs_save_path, embeddings.cpu().numpy())

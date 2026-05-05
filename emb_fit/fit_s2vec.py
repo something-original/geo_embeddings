@@ -1,5 +1,5 @@
-from utils import get_dataloader
-from models import S2VecModel
+from .utils import get_dataloader
+from .models import S2VecModel
 
 import numpy as np
 import torch
@@ -13,6 +13,7 @@ def train_s2vec(
     val_path: str,
     checkpoint_path: str,
     device: str,
+    cols_to_drop: list[str] | None = None
 ) -> S2VecModel:
 
     IMG_SIZE = 128
@@ -28,13 +29,15 @@ def train_s2vec(
         train_path,
         img_size=IMG_SIZE,
         batch_size=BATCH_SIZE,
-        shuffle=True
+        shuffle=True,
+        cols_to_drop=cols_to_drop
     )
 
     val_loader = get_dataloader(
         val_path,
         img_size=IMG_SIZE,
-        batch_size=BATCH_SIZE
+        batch_size=BATCH_SIZE,
+        cols_to_drop=cols_to_drop
     )
 
     model = S2VecModel(
@@ -87,7 +90,7 @@ def train_s2vec(
 def get_s2vec_embeddings(
     model: S2VecModel,
     loader: DataLoader,
-    save_path: str,
+    embs_save_path: str,
     device: str,
 ) -> None:
 
@@ -108,4 +111,4 @@ def get_s2vec_embeddings(
     final_embeddings = np.concatenate(embeddings_list, axis=0)
     print(f"Shape of resulting embeddings: {final_embeddings.shape}")
 
-    np.save(save_path, final_embeddings)
+    np.save(embs_save_path, final_embeddings)
