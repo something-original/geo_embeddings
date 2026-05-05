@@ -56,6 +56,11 @@ class BaseTask(ABC):
         self.crs = "EPSG:4326"
         self.cat_features = cat_features
 
+        self._X_full: gpd.GeoDataFrame | None = None
+        self._y_full: pd.Series | None = None
+
+        self._initial_split_index: dict[str, pd.Index] | None = None
+
 
     def __str__(self) -> str:
         return self.task_name
@@ -67,6 +72,28 @@ class BaseTask(ABC):
 
     def prepare_dataset(self) -> None:
         X, y = self._load_dataset()
+        
+        not_nan_index = y[~y.isna()].index
+        X = X[X.index.isin(not_nan_index)]
+        y = y[y.index.isin(not_nan_index)]
+        
+        self._X_full = X.copy()
+        self._y_full = y.copy()
+
+        self._set_splits_from_xy(X, y)
+        self._initial_split_index = {
+            "train": self.x_train.index.copy(),
+            "val": self.x_val.index.copy(),
+            "test": self.x_test.index.copy(),
+        }
+
+        self.x_train_geom = self.x_train[self.geom_col]
+        self.x_val_geom = self.x_val[self.geom_col]
+        self.x_test_geom = self.x_test[self.geom_col]
+
+        self._drop_cols([self.geom_col])
+
+    def _set_splits_from_xy(self, X: gpd.GeoDataFrame, y: pd.Series) -> None:
         self.x_train, self.x_val, self.y_train, self.y_val = train_test_split(
             X, y, test_size=self.val_ratio, random_state=42
         )
@@ -74,11 +101,67 @@ class BaseTask(ABC):
             self.x_val, self.y_val, test_size=0.5, random_state=42
         )
 
+    def reset_splits(self) -> None:
+        if self._X_full is None or self._y_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+        if not self._initial_split_index:
+            raise RuntimeError("Initial split cache is missing.")
+
+        X = self._X_full
+        y = self._y_full
+        self.x_train = X.loc[self._initial_split_index["train"]]
+        self.y_train = y.loc[self._initial_split_index["train"]]
+        self.x_val = X.loc[self._initial_split_index["val"]]
+        self.y_val = y.loc[self._initial_split_index["val"]]
+        self.x_test = X.loc[self._initial_split_index["test"]]
+        self.y_test = y.loc[self._initial_split_index["test"]]
+
         self.x_train_geom = self.x_train[self.geom_col]
         self.x_val_geom = self.x_val[self.geom_col]
         self.x_test_geom = self.x_test[self.geom_col]
-
         self._drop_cols([self.geom_col])
+
+    def resplit_on_index(self, row_index: pd.Index | list) -> None:
+        """
+        Rebuild train/val/test on a subset of the full dataset (used to align
+        baseline splits with rows that have embeddings).
+        """
+        if self._X_full is None or self._y_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+
+        X = self._X_full.loc[row_index]
+        y = self._y_full.loc[row_index]
+        self._set_splits_from_xy(X, y)
+
+        self.x_train_geom = self.x_train[self.geom_col]
+        self.x_val_geom = self.x_val[self.geom_col]
+        self.x_test_geom = self.x_test[self.geom_col]
+        self._drop_cols([self.geom_col])
+
+    def get_index_with_embeddings(
+        self,
+        embeddings: gpd.GeoDataFrame,
+        emb_geom_col: str,
+    ) -> pd.Index:
+        if self._X_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+
+        Xg = (
+            gpd.GeoDataFrame(self._X_full.copy())
+            .set_geometry(self.geom_col)
+            .set_crs(self.crs)
+        )
+
+        joined = Xg.sjoin(embeddings, how="left")
+        joined = joined[~joined.index.duplicated(keep='first')]
+        joined = joined.drop(columns=["index_right"], errors="ignore")
+
+        emb_cols = [c for c in embeddings.columns if c != emb_geom_col]
+        if not emb_cols:
+            raise ValueError("Embeddings dataframe has no feature columns")
+
+        valid_mask = joined[emb_cols].notna().any(axis=1)
+        return joined.index[valid_mask]
 
     def add_embeddings(self, embeddings: gpd.GeoDataFrame, emb_geom_col: str) -> None:
 
@@ -96,9 +179,13 @@ class BaseTask(ABC):
             gpd.GeoDataFrame(self.x_test).set_geometry(self.geom_col).set_crs(self.crs)
         )
 
-        self.x_train = self.x_train.sjoin(embeddings)
-        self.x_val = self.x_val.sjoin(embeddings)
-        self.x_test = self.x_test.sjoin(embeddings)
+        self.x_train = self.x_train.sjoin(embeddings, how='left')
+        self.x_val = self.x_val.sjoin(embeddings, how='left')
+        self.x_test = self.x_test.sjoin(embeddings, how='left')
+        
+        self.x_train = self.x_train[~self.x_train.index.duplicated(keep='first')]
+        self.x_val = self.x_val[~self.x_val.index.duplicated(keep='first')]
+        self.x_test = self.x_test[~self.x_test.index.duplicated(keep='first')]
         
         self.x_train.drop(columns=['index_right'], inplace=True, errors='ignore')
         self.x_val.drop(columns=['index_right'], inplace=True, errors='ignore')

@@ -63,7 +63,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
             'dealType', 'roomsCount', 'repairType', 'hasFurniture', 'isApartments',
             'floorNumber', 'flatType', 'livingArea', 'windowsViewType', 'balconiesCount',
             'kitchenArea', 'isRecidivist', 'totalArea', 'hasLift', 'buildYear',
-            'materialType' ,'distance_to_center', 'highways_count', 'undergrounds_count',
+            'materialType','distance_to_center', 'highways_count', 'undergrounds_count',
             'railways_count', 'time_to_metro'
         ],
         geom_col='geometry',
@@ -104,7 +104,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
         target_col='AverageBill'
     )
 
-    tasks: list[BaseTask] = [fns_task_kkt, flats_task, fns_task_avg_bill]
+    tasks: list[BaseTask] = [fns_task_avg_bill, fns_task_kkt, flats_task]
 
     if CHECK_PEOPLE_WORKPLACES_TASKS:
         people_task = PeopleHousesTask(
@@ -332,14 +332,25 @@ def check_tasks_performance(
     logger.info('----------')
     for task in tasks:
         logger.info(f'Task: {str(task)}, target: {task.target_col}')
-        logger.info('Solving without embeddings')
+
+        first_model, first_path = next(iter(emb_save_paths.items()))
+        first_embeddings = load_embeddings(
+            emb_path=first_path,
+            municipality_path=municiplaities_path,
+            index_col=index_dict['full_index'],
+        )
+        valid_index = task.get_index_with_embeddings(first_embeddings, emb_geom_col='geometry')
+        logger.info(f'Rows with embeddings for task (ref={first_model}): {len(valid_index)}')
+
+        task.resplit_on_index(valid_index)
+
+        logger.info('Solving baseline on embeddings-available subset')
         
         basic_results = task.train_and_eval_model(
             param_distributions=param_distributions,
             n_trials=1
         )
-        
-        logger.info(f'Basic results:\n {basic_results} \n')
+        logger.info(f'Baseline results:\n {basic_results} \n')
 
         for model, path in emb_save_paths.items():
             logger.info(f'Solving with embeddings from model {model}')
@@ -349,42 +360,46 @@ def check_tasks_performance(
                 municipality_path=municiplaities_path,
                 index_col=index_dict['full_index'],
             )
+
             task.add_embeddings(embeddings, 'geometry')
-            
+
             emb_results = task.train_and_eval_model(
                 param_distributions=param_distributions,
-                n_trials=1     
+                n_trials=1
             )
             logger.info(f'Results with embs from model {model}:\n {emb_results} \n')
 
             task.clear_embeddings(embeddings)
-            
+
+        task.reset_splits()
         logger.info('-------------------')
 
 
 if __name__ == '__main__':
     index_feature = 'municipality_id'
     tasks = create_and_prepare_tasks()
-
+    
     dataset_dict, index_dict, feature_scaler = prepare_emb_dataset(
         features_to_drop=[],
         index_feature=index_feature
     )
 
-    """
-    model_dict = train_embedding_models(
-        dataset_dict=dataset_dict,
-        index_feature=index_feature
-    )
-    model_dict['feature_scaler'] = feature_scaler
-    
-    generate_embeddings(
-        model_dict=model_dict,
-        index_feature=index_feature,
-        index_dict=index_dict,
-        dataset_dict=dataset_dict
-    )"""
-    
+    train_and_generate_embeddings = False
+
+    if train_and_generate_embeddings:
+        model_dict = train_embedding_models(
+            dataset_dict=dataset_dict,
+            index_feature=index_feature
+        )
+        model_dict['feature_scaler'] = feature_scaler
+        
+        generate_embeddings(
+            model_dict=model_dict,
+            index_feature=index_feature,
+            index_dict=index_dict,
+            dataset_dict=dataset_dict
+        )
+
     check_tasks_performance(
         tasks=tasks,
         index_dict=index_dict
