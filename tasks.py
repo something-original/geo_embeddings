@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 from shapely import Polygon, wkt
 
+from utils import PathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +188,10 @@ class BaseTask(ABC):
         self.x_val = self.x_val[~self.x_val.index.duplicated(keep='first')]
         self.x_test = self.x_test[~self.x_test.index.duplicated(keep='first')]
         
-        self.x_train.drop(columns=['index_right'], inplace=True, errors='ignore')
-        self.x_val.drop(columns=['index_right'], inplace=True, errors='ignore')
-        self.x_test.drop(columns=['index_right'], inplace=True, errors='ignore')
+        cols_to_drop = ['index_right', 'municipality_id_left', 'municipality_id_right']
+        self.x_train.drop(columns=cols_to_drop, inplace=True, errors='ignore')
+        self.x_val.drop(columns=cols_to_drop, inplace=True, errors='ignore')
+        self.x_test.drop(columns=cols_to_drop, inplace=True, errors='ignore')
 
         emb_col_set = set(embeddings.columns)
         emb_col_set.remove(emb_geom_col)
@@ -237,7 +239,11 @@ class BaseTask(ABC):
                 **{**self.model.get_params(), **params}
             )
             model_instance.fit(
-                self.x_train, self.y_train, cat_features=self.cat_features
+                self.x_train,
+                self.y_train,
+                cat_features=self.cat_features,
+                eval_set=(self.x_val, self.y_val),
+                early_stopping_rounds=50
             )
 
             y_pred_val = model_instance.predict(self.x_val)
@@ -336,8 +342,85 @@ class FNSTask(BaseTask):
 class FlatsTask(BaseTask):
     task_name = "Flats price prediciton"
 
+
 class PeopleHousesTask(BaseTask):
     task_name = "Population prediction"
 
+
 class WorkplacesDistrictsTask(BaseTask):
     task_name = "Workplaces prediction"
+
+
+class MunDataTask(BaseTask):
+    task_name = "MunDataTask"
+    
+    def _load_dataset(self):
+        mun_df = pd.read_csv(self.dataset_path, sep=';', encoding='utf-8')
+        if self.geom_col in mun_df.columns and isinstance(mun_df[self.geom_col].iloc[0], str):
+            mun_df[self.geom_col] = mun_df[self.geom_col].apply(wkt.loads)
+
+        mun_gdf = gpd.GeoDataFrame(mun_df).set_geometry(self.geom_col).set_crs(self.dataset_crs).to_crs(self.crs)
+
+        emb_paths = PathBuilder.build_emb_datasets_paths()
+        indicators_full = pd.read_csv(emb_paths['train_full_path'], sep=';', encoding='utf-8')
+
+        targets = indicators_full[['municipality_id', self.target_col]].copy()
+
+        merged = mun_gdf.merge(targets, how='inner', left_on='id', right_on='municipality_id')
+        merged = merged.set_index('municipality_id', drop=True)
+
+        for c in self.features:
+            if c not in merged.columns:
+                continue
+            if merged[c].dtype == 'object':
+                merged[c] = pd.factorize(merged[c])[0].astype('int32')
+
+        X = merged[self.features + [self.geom_col]].copy()
+        y = merged[self.target_col].copy()
+
+        return X, y
+
+    def get_index_with_embeddings(
+        self,
+        embeddings: gpd.GeoDataFrame,
+        emb_geom_col: str,
+    ) -> pd.Index:
+
+        if self._X_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+
+        return self._X_full.index.intersection(embeddings.index)
+
+    def add_embeddings(self, embeddings: gpd.GeoDataFrame, emb_geom_col: str) -> None:
+
+        if not hasattr(self, "_baseline_splits_cache") or self._baseline_splits_cache is None:
+            self._baseline_splits_cache = {
+                "x_train": self.x_train.copy(),
+                "x_val": self.x_val.copy(),
+                "x_test": self.x_test.copy(),
+                "features": list(self.features),
+                "cat_features": list(self.cat_features),
+            }
+
+        emb_df = embeddings.drop(columns=[emb_geom_col], errors="ignore")
+        if emb_df.index.has_duplicates:
+            emb_df = emb_df[~emb_df.index.duplicated(keep="first")]
+
+        self.x_train = emb_df.loc[self.x_train.index].copy()
+        self.x_val = emb_df.loc[self.x_val.index].copy()
+        self.x_test = emb_df.loc[self.x_test.index].copy()
+
+        self.features = list(emb_df.columns)
+        self.cat_features = []
+
+    def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
+
+        cache = getattr(self, "_baseline_splits_cache", None)
+        if not cache:
+            return
+        self.x_train = cache["x_train"]
+        self.x_val = cache["x_val"]
+        self.x_test = cache["x_test"]
+        self.features = cache["features"]
+        self.cat_features = cache["cat_features"]
+        self._baseline_splits_cache = None

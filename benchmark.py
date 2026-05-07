@@ -32,6 +32,7 @@ from tasks import (
     BaseTask,
     FlatsTask,
     FNSTask,
+    MunDataTask,
     PeopleHousesTask,
     WorkplacesDistrictsTask
 )
@@ -139,7 +140,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
 def prepare_emb_dataset(
     features_to_drop: list[str],
     index_feature: str
-) -> tuple[dict, dict, StandardScaler]:
+) -> tuple[dict, dict, StandardScaler, list[str]]:
 
     scaler = StandardScaler()
     emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
@@ -195,7 +196,7 @@ def prepare_emb_dataset(
         'full_index': full_index
     }
     
-    return dataset_dict, index_dict, scaler
+    return dataset_dict, index_dict, scaler, target_col_names
 
 
 def train_embedding_models(
@@ -261,7 +262,6 @@ def generate_embeddings(
     emb_save_paths = PathBuilder.build_embs_save_paths()
     emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
     municiplaities_path = emb_dataset_paths['municiplaities_path']
-    models_save_paths = PathBuilder.build_models_save_paths()
 
     logger.info('----------')
     logger.info('Getting GNN embeddings')
@@ -365,7 +365,7 @@ def check_tasks_performance(
 
             emb_results = task.train_and_eval_model(
                 param_distributions=param_distributions,
-                n_trials=1
+                n_trials=10
             )
             logger.info(f'Results with embs from model {model}:\n {emb_results} \n')
 
@@ -379,10 +379,34 @@ if __name__ == '__main__':
     index_feature = 'municipality_id'
     tasks = create_and_prepare_tasks()
     
-    dataset_dict, index_dict, feature_scaler = prepare_emb_dataset(
+    dataset_dict, index_dict, feature_scaler, target_cols = prepare_emb_dataset(
         features_to_drop=[],
         index_feature=index_feature
     )
+
+    emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
+    municipalities_path = emb_dataset_paths['municiplaities_path']
+
+    mun_cols = pd.read_csv(municipalities_path, sep=';', nrows=1).columns.tolist()
+    mun_features = [c for c in mun_cols if c not in ['id', 'geometry']]
+    base_tasks_n = len(tasks)
+
+    for target_col in target_cols:
+        tasks.append(
+            MunDataTask(
+                dataset_path=municipalities_path,
+                features=mun_features,
+                target_col=target_col,
+                geom_col='geometry',
+                val_ratio=0.2,
+                model=model.copy(),
+                cat_features=[],
+            )
+        )
+
+    for task in tasks[base_tasks_n:]:
+        logger.info(f'Preparing dataset for task: {str(task)}, target: {task.target_col}')
+        task.prepare_dataset()
 
     train_and_generate_embeddings = False
 

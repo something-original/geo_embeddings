@@ -107,7 +107,8 @@ def load_embeddings(
     embeddings = gpd.GeoDataFrame(embeddings).set_geometry(geom_col).set_crs('EPSG:4326')
     
     embeddings = embeddings.drop_duplicates(subset=[index_col_name])
-    embeddings.drop(columns=[ 'municipality_id', 'id'], inplace=True, errors='ignore')
+    embeddings = embeddings.set_index(index_col_name, drop=True)
+    embeddings.drop(columns=['id'], inplace=True, errors='ignore')
 
     return embeddings
 
