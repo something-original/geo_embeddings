@@ -198,6 +198,7 @@ class BaseTask(ABC):
         self.features.extend(list(emb_col_set))
 
         self._drop_cols([self.geom_col])
+        logger.info(f'Features after adding embddings: {self.features}')
 
     def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
         emb_cols = embeddings.columns
@@ -209,68 +210,6 @@ class BaseTask(ABC):
         self.features = [f for f in self.features if f not in emb_cols]
         self.cat_features = [f for f in self.cat_features if f not in emb_cols]
         logger.info(f'Features after cleaning: {self.features}')
-    
-    def train_and_eval_model(
-        self, param_distributions: dict, n_trials: int = 100
-    ) -> dict:
-        
-        logger.info(f'Number of features: {len(self.features)}')
-        logger.info(f'Features: {self.features}')
-
-        def objective(trial):
-            params = {}
-            for param_name, param_range in param_distributions.items():
-                if isinstance(param_range, (list, tuple)) and len(param_range) == 2:
-                    low, high = param_range
-                    if isinstance(low, int) and isinstance(high, int):
-                        params[param_name] = trial.suggest_int(param_name, low, high)
-                    else:
-                        params[param_name] = trial.suggest_float(param_name, low, high)
-                elif isinstance(param_range, list):
-                    params[param_name] = trial.suggest_categorical(
-                        param_name, param_range
-                    )
-                else:
-                    raise ValueError(
-                        f"Unsupported parameter range format for {param_name}"
-                    )
-
-            model_instance = self.model.__class__(
-                **{**self.model.get_params(), **params}
-            )
-            model_instance.fit(
-                self.x_train,
-                self.y_train,
-                cat_features=self.cat_features,
-                eval_set=(self.x_val, self.y_val),
-                early_stopping_rounds=50
-            )
-
-            y_pred_val = model_instance.predict(self.x_val)
-            val_rmse = root_mean_squared_error(self.y_val, y_pred_val)
-            return val_rmse
-
-        study = optuna.create_study(direction="minimize")
-        study.optimize(objective, n_trials=n_trials)
-
-        best_params = study.best_params
-        best_model = self.model.__class__(**{**self.model.get_params(), **best_params})
-        best_model.fit(self.x_train, self.y_train, cat_features=self.cat_features)
-
-        y_pred_test = best_model.predict(self.x_test)
-
-        rmse = root_mean_squared_error(self.y_test, y_pred_test)
-        mae = mean_absolute_error(self.y_test, y_pred_test)
-        r2 = r2_score(self.y_test, y_pred_test)
-        pearson_corr, _ = pearsonr(self.y_test, y_pred_test)
-
-        return {
-            "RMSE": rmse,
-            "MAE": mae,
-            "R2": r2,
-            "Pearson Correlation": pearson_corr,
-            "Best Params": best_params,
-        }
 
     def _load_dataset(self):
         dataset = gpd.read_file(self.dataset_path)

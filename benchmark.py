@@ -2,8 +2,12 @@ import logging
 import os
 
 import pandas as pd
+import numpy as np
 from sklearn.preprocessing import StandardScaler
 from catboost import CatBoostRegressor
+from collections import defaultdict
+import json
+from pathlib import Path
 
 from config import (
     BENCHMARK_LOG_PATH,
@@ -13,7 +17,13 @@ from config import (
     PEOPLE_FEATURES,
     PEOPLE_CAT_FEATURES,
     WORKPLACES_FEATURES,
-    WORKPLACES_CAT_FEATURES
+    WORKPLACES_CAT_FEATURES,
+    HF_TOKEN,
+    HF_BEST_REPO_ID,
+    HF_BEST_REPO_PRIVATE,
+    HF_BEST_REPO_REVISION,
+    HF_BEST_REPO_TYPE,
+    HF_BEST_PATH_IN_REPO,
 )
 
 from emb_fit import (
@@ -201,7 +211,9 @@ def prepare_emb_dataset(
 
 def train_embedding_models(
     dataset_dict: dict,
-    index_feature: str
+    index_feature: str,
+    emb_dims: list[int],
+    target_col_names: list[str],
 ) -> dict:
 
     X_train = dataset_dict['X_train']
@@ -212,20 +224,24 @@ def train_embedding_models(
     models_save_paths = PathBuilder.build_models_save_paths()
     emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
 
-    model_dict = {}
+    model_dict: dict = {}
 
-    logger.info('-----------')
-    logger.info('Training GNN')
-    deep_gnn_model, deep_gnn_scaler = train_gnn(
-        X_train=X_train,
-        y_train=y_train,
-        device=DEVICE,
-        X_test=X_test,
-        y_test=y_test,
-        output_path=models_save_paths['deep_gnn_output_path'],    
-    )
-    model_dict['deep_gnn_model'] = deep_gnn_model
-    model_dict['deep_gnn_scaler'] = deep_gnn_scaler
+    model_dict['deep_gnn_model'] = {}
+    model_dict['deep_gnn_scaler'] = {}
+    model_dict['deep_gnn_imputer'] = {}
+    for d in emb_dims:
+        logger.info('-----------')
+        logger.info(f'Training GNN (emb_dim={d})')
+        deep_gnn_model, deep_gnn_scaler, deep_gnn_imputer = train_gnn(
+            X_train=X_train,
+            y_train=y_train,
+            device=DEVICE,
+            output_path=os.path.join(models_save_paths['deep_gnn_output_path']),
+            hidden_channels=d,
+        )
+        model_dict['deep_gnn_model'][d] = deep_gnn_model
+        model_dict['deep_gnn_scaler'][d] = deep_gnn_scaler
+        model_dict['deep_gnn_imputer'][d] = deep_gnn_imputer
 
     logger.info('----------')
     logger.info('Training TabPFN')
@@ -233,21 +249,26 @@ def train_embedding_models(
         X_train=X_train,
         y_train=y_train,
         output_path=models_save_paths['tabpfn_output_path'],
+        device=DEVICE,
     )
     model_dict['tabpfn_model'] = tabpfn_model
     model_dict['tabpfn_target_scaler'] = tabpfn_target_scaler
+    model_dict['tabpfn_train_medians'] = X_train.median(numeric_only=True)
 
-    logger.info('----------')
-    logger.info('Training s2vec')
-    s2vec_model = train_s2vec(
-        train_path=emb_dataset_paths['train_path'],
-        val_path=emb_dataset_paths['val_path'],
-        checkpoint_path=models_save_paths['s2vec_output_path'],
-        device=DEVICE,
-        cols_to_drop=[index_feature],
-    )
-
-    model_dict['s2vec_model'] = s2vec_model
+    model_dict['s2vec_model'] = {}
+    for d in emb_dims:
+        logger.info('----------')
+        logger.info(f'Training s2vec (emb_dim={d})')
+        s2vec_model = train_s2vec(
+            train_path=emb_dataset_paths['train_path'],
+            val_path=emb_dataset_paths['val_path'],
+            checkpoint_path=os.path.join(models_save_paths['s2vec_output_path']),
+            device=DEVICE,
+            embed_dim=d,
+            # CRITICAL: drop targets from the autoencoder input to avoid target leakage
+            cols_to_drop=[index_feature] + list(target_col_names),
+        )
+        model_dict['s2vec_model'][d] = s2vec_model
 
     return model_dict
 
@@ -257,63 +278,178 @@ def generate_embeddings(
     index_feature: str,
     index_dict: dict,
     dataset_dict: dict,
+    emb_dims: list[int],
+    target_col_names: list[str],
 ) -> None:
 
-    emb_save_paths = PathBuilder.build_embs_save_paths()
+    emb_save_paths = PathBuilder.build_embs_save_paths_by_dim(emb_dims)
     emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
     municiplaities_path = emb_dataset_paths['municiplaities_path']
 
-    logger.info('----------')
-    logger.info('Getting GNN embeddings')
-    get_gnn_embeddings(
-        model=model_dict['deep_gnn_model'],
-        X=dataset_dict['X'],
-        edge_index=None,
-        scaler=model_dict['deep_gnn_scaler'],
-        device=DEVICE,
-        embs_save_path=emb_save_paths['gnn'],
-    )
+    for d in emb_dims:
+        logger.info('----------')
+        logger.info(f'Getting GNN embeddings (emb_dim={d})')
+        get_gnn_embeddings(
+            model=model_dict['deep_gnn_model'][d],
+            X=dataset_dict['X'],
+            edge_index=None,
+            scaler=model_dict['deep_gnn_scaler'][d],
+            imputer=model_dict['deep_gnn_imputer'][d],
+            device=DEVICE,
+            embs_save_path=emb_save_paths['gnn'][d],
+        )
 
-    logger.info('----------')
-    logger.info('Getting TabPFN embeddings')
-    get_tabpfn_embeddings(
-        model=model_dict['tabpfn_model'],
-        X=dataset_dict['X'],
-        embs_save_path=emb_save_paths['tabpfn'],
-        feature_scaler=model_dict.get('feature_scaler'),
-    )
+    for d in emb_dims:
+        logger.info('----------')
+        logger.info(f'Getting TabPFN embeddings (emb_dim={d})')
+        get_tabpfn_embeddings(
+            model=model_dict['tabpfn_model'],
+            X=dataset_dict['X'],
+            embs_save_path=emb_save_paths['tabpfn'][d],
+            feature_scaler=model_dict.get('feature_scaler'),
+            train_medians=model_dict.get('tabpfn_train_medians'),
+            output_dim=d,
+        )
 
-    logger.info('----------')
-    logger.info('Getting s2vec embeddings')
-    get_s2vec_embeddings(
-        model=model_dict['s2vec_model'],
-        loader=get_dataloader(
-            csv_path=emb_dataset_paths['train_path'],
-            img_size=128,
-            batch_size=128,
-            shuffle=True,
-            cols_to_drop=[index_feature],
-        ),
-        embs_save_path=emb_save_paths['s2vec'],
-        device=DEVICE,
-    )
+    for d in emb_dims:
+        logger.info('----------')
+        logger.info(f'Getting s2vec embeddings (emb_dim={d})')
+        get_s2vec_embeddings(
+            model=model_dict['s2vec_model'][d],
+            loader=get_dataloader(
+                # Generate for the full municipalities table, in deterministic order
+                csv_path=emb_dataset_paths['train_full_path'],
+                img_size=128,
+                batch_size=128,
+                shuffle=False,
+                cols_to_drop=[index_feature] + list(target_col_names),
+            ),
+            embs_save_path=emb_save_paths['s2vec'][d],
+            device=DEVICE,
+        )
 
-    logger.info('----------')
-    logger.info('Getting Satclip embeddings')
-    get_satclip_embeddings(
-        coordinates=get_geometry_points(
-            index_col=index_dict['full_index'],
-            dataset_path=municiplaities_path,
-        ),
-        device=DEVICE,
-        checkpoint_filename='satclip-resnet18-l40.ckpt',
-        output_path=emb_save_paths['satclip']
-    )
+    coords = get_geometry_points(index_col=index_dict['full_index'], dataset_path=municiplaities_path)
+    for d in emb_dims:
+        logger.info('----------')
+        logger.info(f'Getting Satclip embeddings (emb_dim={d})')
+        get_satclip_embeddings(
+            coordinates=coords,
+            device=DEVICE,
+            checkpoint_filename='satclip-resnet18-l40.ckpt',
+            output_path=emb_save_paths['satclip'][d],
+            output_dim=d,
+        )
+
+
+def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+
+
+def _pearson(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    if np.std(y_true) == 0 or np.std(y_pred) == 0:
+        return float('nan')
+    return float(np.corrcoef(y_true, y_pred)[0, 1])
+
+
+def bootstrap_significance(
+    y_true: pd.Series,
+    y_pred_base: np.ndarray,
+    y_pred_new: np.ndarray,
+    n_boot: int = 300,
+    random_state: int = 42,
+) -> dict:
+    rng = np.random.default_rng(random_state)
+    y = y_true.to_numpy()
+    base = np.asarray(y_pred_base)
+    new = np.asarray(y_pred_new)
+    n = len(y)
+    idx = rng.integers(0, n, size=(n_boot, n))
+
+    deltas_rmse = []
+    deltas_corr = []
+    for b in range(n_boot):
+        ii = idx[b]
+        y_b = y[ii]
+        base_b = base[ii]
+        new_b = new[ii]
+        deltas_rmse.append(_rmse(y_b, new_b) - _rmse(y_b, base_b))
+        deltas_corr.append(_pearson(y_b, new_b) - _pearson(y_b, base_b))
+
+    deltas_rmse = np.asarray(deltas_rmse)
+    deltas_corr = np.asarray(deltas_corr)
+
+    return {
+        "delta_rmse_mean": float(np.nanmean(deltas_rmse)),
+        "delta_corr_mean": float(np.nanmean(deltas_corr)),
+        "p_rmse": float(np.mean(deltas_rmse >= 0)),
+        "p_corr": float(np.mean(deltas_corr <= 0)),
+        "rmse_base": _rmse(y, base),
+        "rmse_new": _rmse(y, new),
+        "corr_base": _pearson(y, base),
+        "corr_new": _pearson(y, new),
+    }
+
+
+def fit_best_model_and_predict(task: BaseTask, param_distributions: dict, n_trials: int = 1) -> np.ndarray:
+    import optuna
+    from sklearn.metrics import root_mean_squared_error
+
+    def objective(trial):
+        params = {}
+        for param_name, param_range in param_distributions.items():
+            if isinstance(param_range, (list, tuple)) and len(param_range) == 2:
+                low, high = param_range
+                if isinstance(low, int) and isinstance(high, int):
+                    params[param_name] = trial.suggest_int(param_name, low, high)
+                else:
+                    params[param_name] = trial.suggest_float(param_name, low, high)
+            elif isinstance(param_range, list):
+                params[param_name] = trial.suggest_categorical(param_name, param_range)
+            else:
+                raise ValueError(f"Unsupported parameter range format for {param_name}")
+
+        params['random_state'] = 42 
+        model_instance = task.model.__class__(**{**task.model.get_params(), **params})
+        if model_instance.__class__.__name__.lower().startswith("catboost"):
+            model_instance.fit(
+                task.x_train,
+                task.y_train,
+                cat_features=task.cat_features,
+                eval_set=(task.x_val, task.y_val),
+                use_best_model=True,
+                early_stopping_rounds=100,
+                verbose=False,
+            )
+        else:
+            model_instance.fit(task.x_train, task.y_train)
+
+        y_pred_val = model_instance.predict(task.x_val)
+        return root_mean_squared_error(task.y_val, y_pred_val)
+
+    study = optuna.create_study(direction="minimize")
+    study.optimize(objective, n_trials=n_trials)
+
+    study.best_params['random_state'] = 42
+    best_model = task.model.__class__(**{**task.model.get_params(), **study.best_params})
+    if best_model.__class__.__name__.lower().startswith("catboost"):
+        best_model.fit(
+            task.x_train,
+            task.y_train,
+            cat_features=task.cat_features,
+            eval_set=(task.x_val, task.y_val),
+            use_best_model=True,
+            early_stopping_rounds=100,
+            verbose=False,
+        )
+    else:
+        best_model.fit(task.x_train, task.y_train)
+    return best_model.predict(task.x_test)
 
 
 def check_tasks_performance(
     tasks: list[BaseTask],
-    index_dict: dict
+    index_dict: dict,
+    emb_dims: list[int],
 ) -> None:
     param_distributions = {
         "learning_rate": (0.01, 0.1),
@@ -325,58 +461,185 @@ def check_tasks_performance(
         "subsample": (0.6, 1.0)
     }
 
-    emb_save_paths = PathBuilder.build_embs_save_paths()
+    emb_save_paths = PathBuilder.build_embs_save_paths_by_dim(emb_dims)
     emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
     municiplaities_path = emb_dataset_paths['municiplaities_path']
 
     logger.info('----------')
+    wins: dict[tuple[str, int], int] = defaultdict(int)
+
     for task in tasks:
         logger.info(f'Task: {str(task)}, target: {task.target_col}')
 
-        first_model, first_path = next(iter(emb_save_paths.items()))
-        first_embeddings = load_embeddings(
-            emb_path=first_path,
+        ref_model = next(iter(emb_save_paths.keys()))
+        ref_dim = emb_dims[0]
+        ref_path = emb_save_paths[ref_model][ref_dim]
+        ref_embeddings = load_embeddings(
+            emb_path=ref_path,
             municipality_path=municiplaities_path,
             index_col=index_dict['full_index'],
         )
-        valid_index = task.get_index_with_embeddings(first_embeddings, emb_geom_col='geometry')
-        logger.info(f'Rows with embeddings for task (ref={first_model}): {len(valid_index)}')
+        valid_index = task.get_index_with_embeddings(ref_embeddings, emb_geom_col='geometry')
+        logger.info(f'Rows with embeddings for task (ref={ref_model}, dim={ref_dim}): {len(valid_index)}')
 
         task.resplit_on_index(valid_index)
 
-        logger.info('Solving baseline on embeddings-available subset')
-        
-        basic_results = task.train_and_eval_model(
-            param_distributions=param_distributions,
-            n_trials=1
+        logger.info('Solving baseline')
+        logger.info(f'Task features: {task.features}')
+        y_pred_base = fit_best_model_and_predict(task, param_distributions, n_trials=10)
+        logger.info(
+            f'Baseline RMSE={_rmse(task.y_test.to_numpy(), y_pred_base):.6f}, '
+            f'Corr={_pearson(task.y_test.to_numpy(), y_pred_base):.6f}'
         )
-        logger.info(f'Baseline results:\n {basic_results} \n')
 
-        for model, path in emb_save_paths.items():
-            logger.info(f'Solving with embeddings from model {model}')
+        for model_name, dim_map in emb_save_paths.items():
+            for d, path in dim_map.items():
+                logger.info(f'\nSolving with embeddings from model {model_name}, dim={d}')
 
-            embeddings = load_embeddings(
-                emb_path=path,
-                municipality_path=municiplaities_path,
-                index_col=index_dict['full_index'],
-            )
+                try:
+                    embeddings = load_embeddings(
+                        emb_path=path,
+                        municipality_path=municiplaities_path,
+                        index_col=index_dict['full_index'],
+                    )
+                except FileNotFoundError:
+                    logger.info(f'No combination for {model_name}, dim={d}')
+                
+                if embeddings is None:
+                    continue
+                    
+                emb_shape = embeddings.drop(columns=['geometry'], errors='ignore').shape
+                logger.info(f'Embeddings dataframe shape (no geom): {emb_shape}')
 
-            task.add_embeddings(embeddings, 'geometry')
+                task.add_embeddings(embeddings, 'geometry')
+                y_pred_new = fit_best_model_and_predict(task, param_distributions, n_trials=10)
 
-            emb_results = task.train_and_eval_model(
-                param_distributions=param_distributions,
-                n_trials=10
-            )
-            logger.info(f'Results with embs from model {model}:\n {emb_results} \n')
+                stats = bootstrap_significance(
+                    y_true=task.y_test,
+                    y_pred_base=y_pred_base,
+                    y_pred_new=y_pred_new,
+                    n_boot=300,
+                )
 
-            task.clear_embeddings(embeddings)
+                logger.info(
+                    "Bootstrap: "
+                    f"RMSE {stats['rmse_base']:.6f}->{stats['rmse_new']:.6f} "
+                    f"(mean Δ={stats['delta_rmse_mean']:.6f}, p={stats['p_rmse']:.4f}); "
+                    f"Corr {stats['corr_base']:.6f}->{stats['corr_new']:.6f} "
+                    f"(mean Δ={stats['delta_corr_mean']:.6f}, p={stats['p_corr']:.4f})"
+                )
+
+                significant = (
+                    stats["p_rmse"] < 0.05
+                    and stats["p_corr"] < 0.05
+                    and stats["delta_rmse_mean"] < 0
+                    and stats["delta_corr_mean"] > 0
+                )
+                if significant:
+                    wins[(model_name, d)] += 1
+
+                task.clear_embeddings(embeddings)
 
         task.reset_splits()
         logger.info('-------------------')
 
+    if wins:
+        best_pair = max(wins.items(), key=lambda kv: kv[1])[0]
+        logger.info("==========")
+        logger.info("BEST (model, dim) by #tasks with significant improvement (RMSE↓ & Corr↑):")
+        logger.info(f"Best model: {best_pair[0]}, emb_dim: {best_pair[1]}, wins: {wins[best_pair]}")
+        logger.info("==========")
+        upload_best_to_hf(
+            best_pair=best_pair,
+            wins=wins,
+            emb_save_paths=emb_save_paths,
+        )
+
+
+def upload_best_to_hf(
+    best_pair: tuple[str, int],
+    wins: dict[tuple[str, int], int],
+    emb_save_paths: dict[str, dict[int, str]],
+) -> None:
+
+    if not HF_TOKEN:
+        logger.warning("HF_TOKEN is not set; skipping HuggingFace upload.")
+        return
+    if not HF_BEST_REPO_ID:
+        logger.warning("HF_BEST_REPO_ID is not set; skipping HuggingFace upload.")
+        return
+
+    model_name, emb_dim = best_pair
+    if model_name not in emb_save_paths or emb_dim not in emb_save_paths[model_name]:
+        logger.warning(f"Cannot find embedding path for {best_pair}; skipping HuggingFace upload.")
+        return
+
+    emb_path = emb_save_paths[model_name][emb_dim]
+    if not os.path.exists(emb_path):
+        logger.warning(f"Embedding file does not exist: {emb_path}; skipping HuggingFace upload.")
+        return
+
+    try:
+        from huggingface_hub import HfApi, create_repo
+    except Exception as e:
+        logger.warning(f"huggingface_hub import failed ({e}); skipping HuggingFace upload.")
+        return
+
+    api = HfApi(token=HF_TOKEN)
+
+    try:
+        create_repo(
+            repo_id=HF_BEST_REPO_ID,
+            token=HF_TOKEN,
+            repo_type=HF_BEST_REPO_TYPE,
+            private=HF_BEST_REPO_PRIVATE,
+            exist_ok=True,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create/resolve HF repo {HF_BEST_REPO_ID}: {e}")
+        return
+
+    summary = {
+        "best_model": model_name,
+        "emb_dim": emb_dim,
+        "wins": {f"{k[0]}_{k[1]}": int(v) for k, v in wins.items()},
+        "selected_by": "max #tasks with significant improvement (RMSE↓ & Corr↑)",
+    }
+
+    out_dir = Path("logs")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = out_dir / "best_embedding_summary.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    path_in_repo_prefix = HF_BEST_PATH_IN_REPO.strip("/")
+    if path_in_repo_prefix:
+        path_in_repo_prefix += "/"
+
+    try:
+        api.upload_file(
+            path_or_fileobj=emb_path,
+            path_in_repo=f"{path_in_repo_prefix}{Path(emb_path).name}",
+            repo_id=HF_BEST_REPO_ID,
+            repo_type=HF_BEST_REPO_TYPE,
+            revision=HF_BEST_REPO_REVISION or None,
+            commit_message=f"Upload best embedding: {model_name}, dim={emb_dim}",
+        )
+        api.upload_file(
+            path_or_fileobj=str(summary_path),
+            path_in_repo=f"{path_in_repo_prefix}{summary_path.name}",
+            repo_id=HF_BEST_REPO_ID,
+            repo_type=HF_BEST_REPO_TYPE,
+            revision=HF_BEST_REPO_REVISION or None,
+            commit_message=f"Upload summary for best embedding: {model_name}, dim={emb_dim}",
+        )
+        logger.info(f"Uploaded best embedding to HF: repo={HF_BEST_REPO_ID}, file={Path(emb_path).name}")
+    except Exception as e:
+        logger.warning(f"Failed to upload to HF ({HF_BEST_REPO_ID}): {e}")
+
 
 if __name__ == '__main__':
     index_feature = 'municipality_id'
+    emb_dims = [128, 192, 256]
     tasks = create_and_prepare_tasks()
     
     dataset_dict, index_dict, feature_scaler, target_cols = prepare_emb_dataset(
@@ -413,7 +676,9 @@ if __name__ == '__main__':
     if train_and_generate_embeddings:
         model_dict = train_embedding_models(
             dataset_dict=dataset_dict,
-            index_feature=index_feature
+            index_feature=index_feature,
+            emb_dims=emb_dims,
+            target_col_names=target_cols,
         )
         model_dict['feature_scaler'] = feature_scaler
         
@@ -421,10 +686,13 @@ if __name__ == '__main__':
             model_dict=model_dict,
             index_feature=index_feature,
             index_dict=index_dict,
-            dataset_dict=dataset_dict
+            dataset_dict=dataset_dict,
+            emb_dims=emb_dims,
+            target_col_names=target_cols,
         )
 
     check_tasks_performance(
         tasks=tasks,
-        index_dict=index_dict
+        index_dict=index_dict,
+        emb_dims=emb_dims,
     )

@@ -11,7 +11,7 @@ __all__ = [
     'get_gnn_embeddings',
     'get_satclip_embeddings',
     'get_dataloader',
-    'prepare_and_save_dataset'
+    'prepare_and_save_dataset',
     'get_s2vec_embeddings',
     'train_s2vec'
 ]

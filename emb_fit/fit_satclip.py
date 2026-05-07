@@ -14,6 +14,7 @@ from tqdm import tqdm
 from huggingface_hub import hf_hub_download
 from .models.satclip.satclip.load import get_satclip
 from config import DEVICE
+from sklearn.decomposition import PCA
 
 
 def get_satclip_embeddings(
@@ -22,7 +23,8 @@ def get_satclip_embeddings(
     checkpoint_filename: str = "satclip-resnet18-l40.ckpt",
     output_path: str = None,
     device: str = None,
-    batch_size: int = 32
+    batch_size: int = 32,
+    output_dim: int | None = None,
 ) -> None:
     """
     Генерирует эмбеддинги SatCLIP для списка координат используя предобученную модель.
@@ -126,6 +128,15 @@ def get_satclip_embeddings(
 
     print(f"Эмбеддинги сгенерированы: форма {embeddings.shape}")
     print(f"Размерность эмбеддинга: {embeddings.shape[1]}")
+
+    if output_dim is not None and embeddings.shape[1] != output_dim:
+        if embeddings.shape[1] < output_dim:
+            raise ValueError(
+                f"Cannot increase embedding dim from {embeddings.shape[1]} to {output_dim}"
+            )
+        pca = PCA(n_components=output_dim, random_state=42)
+        embeddings = pca.fit_transform(embeddings)
+        print(f"Эмбеддинги после PCA: форма {embeddings.shape}")
 
     # Сохраняем если указан путь
     if output_path is not None:

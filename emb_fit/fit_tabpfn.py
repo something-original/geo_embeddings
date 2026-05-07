@@ -7,6 +7,7 @@ from tabpfn import TabPFNRegressor
 from tqdm import tqdm
 import pickle
 from typing import Any
+from sklearn.decomposition import PCA
 
 
 def train_tabpfn(
@@ -16,6 +17,7 @@ def train_tabpfn(
     max_train_samples: int = 10000,
     ignore_pretraining_limits: bool = True,
     columns_to_drop: list = None,
+    device: str = "cuda",
     random_state: int = 42
 ):
     """
@@ -56,13 +58,13 @@ def train_tabpfn(
     y_train_values = y_train.values if isinstance(y_train, pd.Series) else y_train
     y_train_log = np.log10(y_train_values + 1)
     target_scaler = MinMaxScaler(feature_range=(0, 10))
-    y_train_scaled = target_scaler.fit_transform(y_train_log.reshape(-1, 1)).flatten()
+    target_scaler.fit(y_train_log.reshape(-1, 1))
 
     # Создаём и обучаем модель
     model = TabPFNRegressor(
         ignore_pretraining_limits=ignore_pretraining_limits,
         random_state=42,
-        device='cuda'
+        device=device
     )
     print("Начинаем обучение TabPFN...")
     model.fit(X_train, y_train)
@@ -95,6 +97,8 @@ def get_tabpfn_embeddings(
     batch_size: int = 10000,
     average_embeddings: bool = True,
     feature_scaler: Any | None = None,
+    train_medians: Any | None = None,
+    output_dim: int | None = None,
 ):
     """
     Генерирует эмбеддинги с помощью обученной TabPFN модели.
@@ -113,8 +117,14 @@ def get_tabpfn_embeddings(
         # - fill NaNs for scaler
         # - transform
         # - put sentinel -1.0 back where NaNs were originally
-        nan_mask = X.isnull()
-        X_filled = X.replace([np.inf, -np.inf], np.nan).fillna(X.median(numeric_only=True))
+        X_clean = X.replace([np.inf, -np.inf], np.nan)
+        nan_mask = X_clean.isnull()
+        if train_medians is None:
+            # Fallback: dataset-wide median (may slightly leak feature distribution).
+            fill_values = X_clean.median(numeric_only=True)
+        else:
+            fill_values = train_medians
+        X_filled = X_clean.fillna(fill_values)
         X_scaled = feature_scaler.transform(X_filled)
         X_scaled = np.where(nan_mask.to_numpy(), -1.0, X_scaled)
         X = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
@@ -135,4 +145,12 @@ def get_tabpfn_embeddings(
 
     if embeddings:
         tabpfn_embs = np.vstack(embeddings)
+        if output_dim is not None and tabpfn_embs.shape[1] != output_dim:
+            if tabpfn_embs.shape[1] < output_dim:
+                print(
+                    f"Cannot increase embedding dim from {tabpfn_embs.shape[1]} to {output_dim}"
+                )
+                return
+            pca = PCA(n_components=output_dim, random_state=42)
+            tabpfn_embs = pca.fit_transform(tabpfn_embs)
         np.save(embs_save_path, tabpfn_embs)
