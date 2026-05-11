@@ -322,15 +322,8 @@ class S2VecModel(Model):
 
         latent, mask, ids_restore = self.encode(inputs)
         pred = self.decode(latent, ids_restore)
-
-        target = self.patchify(inputs)  # Get target patches
-
-        loss = (pred - target) ** 2
-        loss = loss.mean(dim=-1)
-
-        loss = (loss * mask).sum() / mask.sum()  # Only on masked patches
-
-        return loss, pred, mask
+        target = self.patchify(inputs)
+        return pred, target, mask
 
     def training_step(self, batch: list["torch.Tensor"], batch_idx: int) -> "torch.Tensor":
         """
@@ -346,11 +339,11 @@ class S2VecModel(Model):
             torch.Tensor: The loss value.
         """
         imgs, _ = batch
-        rec, target, mask = self(imgs)
+        pred, target, mask = self(imgs)
 
-        B, N, D = target.shape
-        loss = (rec - target).pow(2).mean(dim=-1)  # MSE per patch
-        loss = (loss * mask).sum() / mask.sum()  # Only on masked patches
+        loss = (pred - target).pow(2).mean(dim=-1)  # MSE per patch
+        denom = mask.sum().clamp_min(1.0)
+        loss = (loss * mask).sum() / denom  # Only on masked patches
 
         self.log("train_loss", loss, on_step=True, on_epoch=True)
         return loss
@@ -367,11 +360,11 @@ class S2VecModel(Model):
             torch.Tensor: The loss value.
         """
         imgs, _ = batch
-        rec, target, mask = self(imgs)
+        pred, target, mask = self(imgs)
 
-        B, N, D = target.shape
-        loss = (rec - target).pow(2).mean(dim=-1)
-        loss = (loss * mask).sum() / mask.sum()
+        loss = (pred - target).pow(2).mean(dim=-1)
+        denom = mask.sum().clamp_min(1.0)
+        loss = (loss * mask).sum() / denom
         self.log("validation_loss", loss, on_step=True, on_epoch=True)
         return loss
 
@@ -398,8 +391,8 @@ class S2VecModel(Model):
         return {
             "img_size": self.patch_embed.img_size,
             "patch_size": self.patch_embed.patch_size,
-            "in_ch": self.patch_embed.in_ch,
-            "embed_dim": self.patch_embed.embed_dim,
+            "in_ch": int(self.patch_embed.proj.in_channels),
+            "embed_dim": int(self.patch_embed.proj.out_channels),
             "mask_ratio": self.mask_ratio,
             "lr": self.lr,
         }

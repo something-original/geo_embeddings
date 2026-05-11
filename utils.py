@@ -57,8 +57,28 @@ class PathBuilder:
             'gnn': os.path.join(models_save_paths['deep_gnn_output_path'], 'gnn_embs.npy'),
             'tabpfn': os.path.join(models_save_paths['tabpfn_output_path'], 'tab_pfn_embs.npy'),
             's2vec': os.path.join(models_save_paths['s2vec_output_path'], 's2vec_embs.npy'),
-            'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs.npy')
+            'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs.npy'),
         }
+
+    @classmethod
+    def build_embs_save_paths_by_dim(cls, emb_dims: list[int]) -> dict[str, dict[int, str]]:
+        """
+        Build per-model embedding output paths for multiple embedding dimensions.
+
+        File naming convention: *_embs_{dim}.npy
+        """
+        models_save_paths = cls.build_models_save_paths()
+        base = {
+            'gnn': os.path.join(models_save_paths['deep_gnn_output_path'], 'gnn_embs'),
+            'tabpfn': os.path.join(models_save_paths['tabpfn_output_path'], 'tab_pfn_embs'),
+            's2vec': os.path.join(models_save_paths['s2vec_output_path'], 's2vec_embs'),
+            'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs'),
+        }
+
+        out: dict[str, dict[int, str]] = {}
+        for model_name, prefix in base.items():
+            out[model_name] = {d: f"{prefix}_{d}.npy" for d in emb_dims}
+        return out
 
 def prepare_mun_df(
     mun_dataset_path: str,
@@ -96,8 +116,17 @@ def load_embeddings(
 ) -> gpd.GeoDataFrame:
 
     index_col_name = index_col.name
-    embeddings = pd.DataFrame(np.load(emb_path))
-    embeddings[index_col_name] = index_col
+    arr = np.load(emb_path)
+    embeddings = pd.DataFrame(arr)
+    if len(embeddings) != len(index_col):
+        print(
+            f"Embeddings length mismatch for {emb_path}: "
+            f"embeddings={len(embeddings)} vs index_col={len(index_col)} "
+            f"(index_col.name={index_col_name}). "
+            f"Make sure you generate embeddings on the same CSV/order as index_col and with shuffle=False."
+        )
+        return
+    embeddings[index_col_name] = index_col.to_numpy()
     
     mun_df = prepare_mun_df(municipality_path, geom_col)
     mun_df = mun_df[['id', geom_col]]
@@ -107,7 +136,8 @@ def load_embeddings(
     embeddings = gpd.GeoDataFrame(embeddings).set_geometry(geom_col).set_crs('EPSG:4326')
     
     embeddings = embeddings.drop_duplicates(subset=[index_col_name])
-    embeddings.drop(columns=[ 'municipality_id', 'id'], inplace=True, errors='ignore')
+    embeddings = embeddings.set_index(index_col_name, drop=True)
+    embeddings.drop(columns=['id'], inplace=True, errors='ignore')
 
     return embeddings
 

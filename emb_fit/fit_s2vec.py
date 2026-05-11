@@ -13,6 +13,7 @@ def train_s2vec(
     val_path: str,
     checkpoint_path: str,
     device: str,
+    embed_dim: int = 256,
     cols_to_drop: list[str] | None = None
 ) -> S2VecModel:
 
@@ -47,7 +48,7 @@ def train_s2vec(
         num_heads=8,
         encoder_layers=6,
         decoder_layers=2,
-        embed_dim=256,
+        embed_dim=embed_dim,
         decoder_dim=128,
         mask_ratio=0.75,
         lr=LEARNING_RATE
@@ -56,7 +57,7 @@ def train_s2vec(
     checkpoint_callback = ModelCheckpoint(
         monitor='validation_loss',
         dirpath=checkpoint_path,
-        filename='s2vec-{epoch:02d}-{train_loss:.2f}',
+        filename='s2vec-{embed_dim:03d}-{epoch:02d}-{train_loss:.2f}',
         save_top_k=3,
         mode='min',
     )

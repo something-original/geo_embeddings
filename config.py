@@ -6,6 +6,15 @@ import torch
 load_dotenv()
 
 HF_TOKEN = os.getenv('HF_TOKEN')
+HF_BEST_REPO_ID = os.getenv('HF_BEST_REPO_ID')
+HF_BEST_REPO_TYPE = os.getenv('HF_BEST_REPO_TYPE') or 'model'
+HF_BEST_REPO_PRIVATE = (os.getenv('HF_BEST_REPO_PRIVATE') or 'false') == 'true'
+HF_BEST_REPO_REVISION = os.getenv('HF_BEST_REPO_REVISION')
+HF_BEST_PATH_IN_REPO = os.getenv('HF_BEST_PATH_IN_REPO') or 'main'
+
+
+os.environ.setdefault('HF_HUB_DISABLE_TELEMETRY', '1')
+
 TOCHNO_ST_BASE_LINK = os.getenv('TOCHNO_ST_BASE_LINK') or 'https://storage.yandexcloud.net/tochno-st-catalog/Rosstat/data_bdmo_118_v20250918/indicators/section<section_id>/data_Y4<dataset_code>_112_v20250918.zip'
 OVERPASS_API_LINK = os.getenv('OVERPASS_API_LINK') or 'https://overpass.openstreetmap.fr/api/'
 MUN_GEOMS_LINK = os.getenv('MUN_GEOMS_LINK') or 'https://s.sber.ru/GthXk7'
