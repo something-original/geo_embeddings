@@ -265,7 +265,6 @@ def train_embedding_models(
             checkpoint_path=os.path.join(models_save_paths['s2vec_output_path']),
             device=DEVICE,
             embed_dim=d,
-            # CRITICAL: drop targets from the autoencoder input to avoid target leakage
             cols_to_drop=[index_feature] + list(target_col_names),
         )
         model_dict['s2vec_model'][d] = s2vec_model
@@ -292,6 +291,7 @@ def generate_embeddings(
         get_gnn_embeddings(
             model=model_dict['deep_gnn_model'][d],
             X=dataset_dict['X'],
+            X_train_reference=dataset_dict['X_train'],
             edge_index=None,
             scaler=model_dict['deep_gnn_scaler'][d],
             imputer=model_dict['deep_gnn_imputer'][d],
@@ -306,8 +306,10 @@ def generate_embeddings(
             model=model_dict['tabpfn_model'],
             X=dataset_dict['X'],
             embs_save_path=emb_save_paths['tabpfn'][d],
-            feature_scaler=model_dict.get('feature_scaler'),
-            train_medians=model_dict.get('tabpfn_train_medians'),
+            # `prepare_and_save_dataset(use_scaler=True)` now scales `train_full_path`,
+            # so we must not apply the feature scaler again here.
+            feature_scaler=None,
+            train_medians=None,
             output_dim=d,
         )
 
@@ -671,7 +673,7 @@ if __name__ == '__main__':
         logger.info(f'Preparing dataset for task: {str(task)}, target: {task.target_col}')
         task.prepare_dataset()
 
-    train_and_generate_embeddings = False
+    train_and_generate_embeddings = True
 
     if train_and_generate_embeddings:
         model_dict = train_embedding_models(

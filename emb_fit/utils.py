@@ -145,11 +145,9 @@ def prepare_and_save_dataset(
         for id in target_feature_ids:
             target_feature_col_name = f'target_{id}'
             target_feature_col_names.append(target_feature_col_name)
-            id_cols = [col for col in df_full.columns if str(id) in col]
+            id_cols = [col for col in df_full.columns if f'ind{str(id)}' in col]
             df_full[target_feature_col_name] = np.nansum(df_full[id_cols].values, axis=1)
             df_full.drop(columns=id_cols, inplace=True)
-
-
     df_full = df_full.set_index(index_feature)
 
     df_train, df_val = train_test_split(df_full, test_size=test_size, random_state=42)
@@ -157,38 +155,70 @@ def prepare_and_save_dataset(
     logger.info(f'Val shape: {df_val.shape}')
 
     if use_scaler and scaler is not None:
+        # IMPORTANT:
+        # - scaler is fit ONLY on train split
+        # - NaN filling uses ONLY train medians (so val/full get consistent preprocessing)
+        # - NaN positions are restored as sentinel -1.0 after scaling
 
         original_targets_train = df_train[target_feature_col_names].copy()
         original_targets_val = df_val[target_feature_col_names].copy()
+        original_targets_full = df_full[target_feature_col_names].copy()
 
-        df_train.drop(columns=target_feature_col_names, inplace=True)
-        df_val.drop(columns=target_feature_col_names, inplace=True)
+        df_train_features = df_train.drop(columns=target_feature_col_names)
+        df_val_features = df_val.drop(columns=target_feature_col_names)
+        df_full_features = df_full.drop(columns=target_feature_col_names)
 
-        df_train_for_scaler = df_train.fillna(df_train.median())
-        df_val_for_scaler = df_val.fillna(df_val.median())
+        # Use medians computed on train ONLY for filling missing features
+        feature_medians = df_train_features.median(numeric_only=True)
+
+        train_mask = df_train_features.isnull()
+        val_mask = df_val_features.isnull()
+        full_mask = df_full_features.isnull()
+
+        df_train_for_scaler = df_train_features.fillna(feature_medians)
+        df_val_for_scaler = df_val_features.fillna(feature_medians)
+        df_full_for_scaler = df_full_features.fillna(feature_medians)
 
         train_scaled = pd.DataFrame(
             scaler.fit_transform(df_train_for_scaler),
-            columns=df_train.columns,
-            index=df_train.index
+            columns=df_train_features.columns,
+            index=df_train_features.index
         )
         val_scaled = pd.DataFrame(
             scaler.transform(df_val_for_scaler),
-            columns=df_val.columns,
-            index=df_val.index
+            columns=df_val_features.columns,
+            index=df_val_features.index
         )
-
-        train_mask = df_train.isnull()
-        val_mask = df_val.isnull()
+        full_scaled = pd.DataFrame(
+            scaler.transform(df_full_for_scaler),
+            columns=df_full_features.columns,
+            index=df_full_features.index
+        )
 
         train_scaled_final = np.where(train_mask, -1.0, train_scaled.values)
         val_scaled_final = np.where(val_mask, -1.0, val_scaled.values)
+        full_scaled_final = np.where(full_mask, -1.0, full_scaled.values)
 
-        df_train = pd.DataFrame(train_scaled_final, columns=df_train.columns, index=df_train.index)
-        df_val = pd.DataFrame(val_scaled_final, columns=df_val.columns, index=df_val.index)
+        df_train = pd.DataFrame(
+            train_scaled_final,
+            columns=df_train_features.columns,
+            index=df_train_features.index,
+        )
+        df_val = pd.DataFrame(
+            val_scaled_final,
+            columns=df_val_features.columns,
+            index=df_val_features.index,
+        )
+        df_full = pd.DataFrame(
+            full_scaled_final,
+            columns=df_full_features.columns,
+            index=df_full_features.index,
+        )
 
+        # Reattach targets (without scaling)
         df_train[target_feature_col_names] = original_targets_train
         df_val[target_feature_col_names] = original_targets_val
+        df_full[target_feature_col_names] = original_targets_full
 
     kwargs = {'sep': csv_sep, 'index': True}
     df_train.to_csv(train_path, **kwargs)

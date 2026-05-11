@@ -59,6 +59,7 @@ def train_tabpfn(
     y_train_log = np.log10(y_train_values + 1)
     target_scaler = MinMaxScaler(feature_range=(0, 10))
     target_scaler.fit(y_train_log.reshape(-1, 1))
+    y_train_scaled = target_scaler.transform(y_train_log.reshape(-1, 1)).flatten()
 
     # Создаём и обучаем модель
     model = TabPFNRegressor(
@@ -67,7 +68,8 @@ def train_tabpfn(
         device=device
     )
     print("Начинаем обучение TabPFN...")
-    model.fit(X_train, y_train)
+    # Train on transformed target to match the fitted target scaler.
+    model.fit(X_train, y_train_scaled)
     print("Обучение завершено")
 
     # Сохраняем модель и scaler

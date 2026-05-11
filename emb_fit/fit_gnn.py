@@ -7,6 +7,7 @@ import torch.nn as nn
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import kneighbors_graph
+from sklearn.neighbors import NearestNeighbors
 from sklearn.impute import SimpleImputer
 
 from torch_geometric.data import Data
@@ -63,8 +64,6 @@ def train_gnn(
 
     if columns_to_drop:
         X_train = X_train.drop(columns=[col for col in columns_to_drop if col in X_train.columns], errors='ignore')
-        if X_test is not None:
-            X_test = X_test.drop(columns=[col for col in columns_to_drop if col in X_test.columns], errors='ignore')
 
     # Inductive training: build the graph ONLY on train split.
     X_full = X_train
@@ -73,10 +72,10 @@ def train_gnn(
 
     print(f"Обучаем GNN на {len(X_train)} образцах с {X_full.shape[1]} признаками")
 
-    # Масштабирование признаков: fit on train only
-    scaler = StandardScaler()
-    scaler.fit(X_train.values)
-    X_full_scaled = scaler.transform(X_full.values)
+    # Inputs are expected to be pre-scaled by `prepare_and_save_dataset(..., use_scaler=True)`.
+    # We do not re-fit/transform scalers here to avoid train/inference mismatch.
+    scaler = None
+    X_full_scaled = X_full.values
 
     # Масштабирование целевой переменной: fit on y_train only
     target_scaler = StandardScaler()
@@ -150,6 +149,7 @@ def train_gnn(
         'n_neighbors': n_neighbors
     }
 
+    os.makedirs(output_path, exist_ok=True)
     output_path = os.path.join(output_path, f'gnn_{hidden_channels}.pt')
     torch.save(save_dict, output_path)
     print(f"Модель сохранена: {output_path}")
@@ -161,6 +161,7 @@ def get_gnn_embeddings(
     model,
     X,
     embs_save_path: str,
+    X_train_reference=None,
     edge_index=None,
     scaler=None,
     imputer=None,
@@ -173,6 +174,8 @@ def get_gnn_embeddings(
     Args:
         model: Обученная GNN модель
         X: pandas DataFrame или numpy array с данными
+        X_train_reference: train-признаки, на которых обучался граф; если переданы,
+            базовый граф строится только на них, а для X добавляются только связи к train.
         edge_index: Опциональный edge_index для графа (если None, строится k-NN граф)
         scaler: StandardScaler для масштабирования признаков
         n_neighbors: Количество соседей для построения графа (если edge_index не предоставлен)
@@ -186,29 +189,90 @@ def get_gnn_embeddings(
 
     if isinstance(X, np.ndarray):
         X = pd.DataFrame(X)
+    if isinstance(X_train_reference, np.ndarray):
+        X_train_reference = pd.DataFrame(X_train_reference)
 
     # Масштабирование (use train-fitted scaler if provided)
     X_scaled = scaler.transform(X.values) if scaler is not None else X.values
+    X_train_scaled = None
+    if X_train_reference is not None:
+        X_train_scaled = (
+            scaler.transform(X_train_reference.values)
+            if scaler is not None
+            else X_train_reference.values
+        )
 
-    # Imputation (use train-fitted imputer if provided; otherwise fit on current X)
+    # Imputation:
+    # - if train reference is provided and imputer is missing, fit on train reference
+    # - otherwise fallback to fitting on current X
     if imputer is None:
         imputer = SimpleImputer(strategy='median')
-        X_imputed = imputer.fit_transform(X_scaled)
+        if X_train_scaled is not None:
+            imputer.fit(X_train_scaled)
+            X_train_imputed = imputer.transform(X_train_scaled)
+            X_imputed = imputer.transform(X_scaled)
+        else:
+            X_imputed = imputer.fit_transform(X_scaled)
+            X_train_imputed = None
     else:
         X_imputed = imputer.transform(X_scaled)
+        X_train_imputed = (
+            imputer.transform(X_train_scaled)
+            if X_train_scaled is not None
+            else None
+        )
 
     # Построение графа если не предоставлен
     if edge_index is None:
-        A = kneighbors_graph(
-            X_imputed,
-            n_neighbors=n_neighbors,
-            mode='connectivity',
-            include_self=False,
-        )
-        edge_index = torch.tensor(np.array(A.nonzero()), dtype=torch.long)
+        if X_train_imputed is not None and len(X_train_imputed) > 0:
+            # Inductive mode:
+            # 1) Keep base graph on train anchors only.
+            # 2) Add edges from each current node to nearest train anchors (+ reverse).
+            n_full = X_imputed.shape[0]
+            n_train = X_train_imputed.shape[0]
+            k = max(1, min(n_neighbors, n_train))
+
+            # Base graph on train anchors with node ids shifted by n_full
+            A_train = kneighbors_graph(
+                X_train_imputed,
+                n_neighbors=k,
+                mode='connectivity',
+                include_self=False,
+            ).tocoo()
+            train_src = A_train.row + n_full
+            train_dst = A_train.col + n_full
+
+            # New edges: full nodes <-> train anchors
+            nn = NearestNeighbors(n_neighbors=k)
+            nn.fit(X_train_imputed)
+            neigh_idx = nn.kneighbors(X_imputed, return_distance=False)
+
+            full_src = np.repeat(np.arange(n_full), k)
+            full_to_train_dst = neigh_idx.reshape(-1) + n_full
+
+            # Bidirectional message passing between current nodes and anchors
+            src = np.concatenate([train_src, full_src, full_to_train_dst])
+            dst = np.concatenate([train_dst, full_to_train_dst, full_src])
+
+            edge_index = torch.tensor(np.vstack([src, dst]), dtype=torch.long)
+        else:
+            A = kneighbors_graph(
+                X_imputed,
+                n_neighbors=n_neighbors,
+                mode='connectivity',
+                include_self=False,
+            )
+            edge_index = torch.tensor(np.array(A.nonzero()), dtype=torch.long)
 
     # Конвертация в тензоры
-    x_tensor = torch.tensor(X_imputed, dtype=torch.float32).to(device)
+    if X_train_imputed is not None and edge_index is not None:
+        x_for_graph = np.vstack([X_imputed, X_train_imputed])
+        n_output = X_imputed.shape[0]
+    else:
+        x_for_graph = X_imputed
+        n_output = X_imputed.shape[0]
+
+    x_tensor = torch.tensor(x_for_graph, dtype=torch.float32).to(device)
     edge_index = edge_index.to(device)
 
     # Генерация эмбеддингов
@@ -216,4 +280,5 @@ def get_gnn_embeddings(
     with torch.no_grad():
         embeddings = model.get_embeddings(x_tensor, edge_index)
 
-    np.save(embs_save_path, embeddings.cpu().numpy())
+    # Save only embeddings for requested X (exclude train anchor nodes if used)
+    np.save(embs_save_path, embeddings[:n_output].cpu().numpy())
