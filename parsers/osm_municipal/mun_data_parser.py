@@ -54,12 +54,12 @@ async def download_one_file(session, semaphore, base_download_url, section_id, d
                 f.write(await response.read())
 
 
-def download_mun_data(root_dir):
+async def download_mun_data(root_dir):
 
     mun_datasets_df_path = os.path.join(root_dir, "datasets", "mun_datasets_metadata.csv")
     mun_datasets_df = pl.read_csv(mun_datasets_df_path, separator=";")
 
-    asyncio.run(download_all_files(TOCHNO_ST_BASE_LINK, mun_datasets_df))
+    await download_all_files(TOCHNO_ST_BASE_LINK, mun_datasets_df)
 
 
 class FeatureStore:
@@ -264,14 +264,14 @@ def align_old_new_indicator_values(
     return new_j, old_j
 
 
-def parse_mun_data(root_dir):
+async def parse_mun_data(root_dir):
     logger.info("Start")
 
     folder_path = Path(os.path.join(root_dir, "datasets", "mun_data"))
 
     if not list(folder_path.glob("*.zip")):
         logger.info("Downloading files")
-        download_mun_data(root_dir)
+        await download_mun_data(root_dir)
     else:
         logger.info("Not downloading files")
 
@@ -576,8 +576,3 @@ def parse_mun_data(root_dir):
     aligned_old.write_csv(os.path.join(folder_path, "indicator_values_old.csv"), **write_settings)
 
     logger.info("Processing complete (indicator_values = latest year, indicator_values_old = second-latest).")
-
-
-if __name__ == "__main__":
-    root_dir = Path(__file__).resolve().parents[2]
-    parse_mun_data(root_dir)

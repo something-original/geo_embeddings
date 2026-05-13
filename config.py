@@ -35,3 +35,14 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BENCHMARK_LOG_PATH = "logs/models_tasks_performance.log"
 
 os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
+
+HOST = os.getenv('HOST', '0.0.0.0')
+PORT = int(os.getenv('PORT', '1414'))
+
+DB_HOST = os.getenv('DB_HOST', '127.0.0.1')
+DB_PORT = os.getenv('DB_PORT', '1212')
+DB_NAME = os.getenv('DB_NAME', 'geo_embeddings')
+DB_USER = os.getenv('DB_USER', 'georgiykiselev')
+DB_PWD = os.getenv('DB_PWD', 'georgiykiselev')
+
+DB_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PWD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"

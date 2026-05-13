@@ -749,7 +749,7 @@ if __name__ == '__main__':
 
     run_experiments(
         model=CatBoostRegressor(),
-        train_and_generate_embs=False,
+        train_and_generate_embs=True,
         index_feature='municipality_id',
         features_to_drop=[],
         emb_dims=[128, 192, 256],

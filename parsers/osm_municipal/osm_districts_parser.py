@@ -22,7 +22,7 @@ async def load_mun_geometry(mun_data_geom_link, save_path):
                 f.write(await resp.read())
 
 
-def form_mun_geometry():
+async def form_mun_geometry():
 
     root_dir = Path(__file__).resolve().parents[2]
 
@@ -41,7 +41,7 @@ def form_mun_geometry():
     save_path = os.path.join(*path_parts, 'mun_data_geom.rar')
 
     if not Path(save_path).exists():
-        asyncio.run(load_mun_geometry(MUN_GEOMS_LINK, save_path))
+        await load_mun_geometry(MUN_GEOMS_LINK, save_path)
 
     files_before = set(save_folder.rglob('*'))
     unpack_cmd = ["7z", "x", save_path, f"-o{save_folder}", "-y"]
