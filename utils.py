@@ -32,14 +32,14 @@ class PathBuilder:
         
         return {
             'dataset_path': os.path.join(*path_parts, 'indicator_values.csv'),
+            'dataset_path_old': os.path.join(*path_parts, 'indicator_values_old.csv'),
             'train_path': os.path.join(*path_parts, 'indicator_values_train.csv'),
             'val_path': os.path.join(*path_parts, 'indicator_values_val.csv'),
-            'train_full_path': os.path.join(*path_parts, 'indicator_values_full.csv'),
             'indicators_path': os.path.join(*path_parts, 'base_indicators.csv'),
             'municiplaities_path': os.path.join(*path_parts, 'municipalities.csv'),
+            'inference_full_path': os.path.join(*path_parts, 'indicator_values_inference.csv')
         }
-
-    
+ 
     @classmethod
     def build_models_save_paths(cls) -> dict:
         path_parts = [cls.root_dir, 'emb_fit']
@@ -69,16 +69,17 @@ class PathBuilder:
         """
         models_save_paths = cls.build_models_save_paths()
         base = {
+            'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs'),
             'gnn': os.path.join(models_save_paths['deep_gnn_output_path'], 'gnn_embs'),
             'tabpfn': os.path.join(models_save_paths['tabpfn_output_path'], 'tab_pfn_embs'),
             's2vec': os.path.join(models_save_paths['s2vec_output_path'], 's2vec_embs'),
-            'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs'),
         }
 
         out: dict[str, dict[int, str]] = {}
         for model_name, prefix in base.items():
             out[model_name] = {d: f"{prefix}_{d}.npy" for d in emb_dims}
         return out
+
 
 def prepare_mun_df(
     mun_dataset_path: str,
@@ -91,8 +92,8 @@ def prepare_mun_df(
     df = gpd.GeoDataFrame(df).set_geometry(geom_col).set_crs('EPSG:4326')
     df['id'] = df['id'].apply(int)
 
-    return df
-    
+    return df 
+
 
 def get_geometry_points(
     index_col: pd.Series,

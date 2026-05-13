@@ -3,7 +3,6 @@ import asyncio
 import os
 import pandas as pd
 import geopandas as gpd
-from shapely import Point, wkt
 
 from pathlib import Path
 from config import MUN_GEOMS_LINK
@@ -30,11 +29,13 @@ def form_mun_geometry():
     path_parts = [root_dir, 'datasets', 'mun_data']
     mun_districts_df_path = os.path.join(*path_parts, 'municipalities.csv')
     indicators_df_path = os.path.join(*path_parts, 'indicator_values.csv')
+    old_indicators_df_path = os.path.join(*path_parts, 'indicator_values_old.csv')
 
     df_attrs = {'sep': ';', 'encoding': 'utf-8'}
 
     mun_districts_df = pd.read_csv(mun_districts_df_path, **df_attrs)
     indicators_df = pd.read_csv(indicators_df_path, **df_attrs)
+    indicators_df_old = pd.read_csv(old_indicators_df_path, **df_attrs)
 
     save_folder = Path(*path_parts)
     save_path = os.path.join(*path_parts, 'mun_data_geom.rar')
@@ -62,24 +63,32 @@ def form_mun_geometry():
             mun_points = gpd.read_file(file_str)
             os.remove(file_str)
 
-    mun_df_orig = mun_districts_df.copy()
+    mun_districts_df.drop(columns=['geometry'], inplace=True, errors='ignore')
     mun_districts_df = mun_districts_df[~mun_districts_df['oktmo'].isin(["CD", "ND"])]
 
     mun_points = mun_points[['oktmo', 'territory_id']]
     mun_points['oktmo'] = mun_points['oktmo'].str.replace('-','').str.slice(stop=-3)
-    
+
     mun_geometry = mun_geometry[['territory_id', 'geometry']]
     mun_geometry['territory_id'] = mun_geometry['territory_id'].apply(int)
-    
+
     mun_geometry = mun_points.merge(mun_geometry, how='left')
     mun_geometry.drop(columns=['territory_id'], inplace=True)
+
+    mun_districts_df['oktmo'] = mun_districts_df['oktmo'].apply(str)
+    mun_districts_df.loc[mun_districts_df['oktmo'].str.len() == 7, 'oktmo'] = '0' + mun_districts_df['oktmo']
+
     mun_districts_df = mun_districts_df.merge(mun_geometry, how='left')
-    
+
     mun_districts_df = mun_districts_df[~mun_districts_df['geometry'].isna()]
     indicators_df = indicators_df[indicators_df['municipality_id'].isin(mun_districts_df['id'])]
+    indicators_df_old = indicators_df_old[indicators_df_old['municipality_id'].isin(mun_districts_df['id'])]
+
+    mun_districts_df = mun_districts_df.drop_duplicates(subset=['id'])
 
     mun_districts_df.to_csv(mun_districts_df_path, index=False, **df_attrs)
     indicators_df.to_csv(indicators_df_path, index=False, **df_attrs)
+    indicators_df_old.to_csv(indicators_df_path, index=False, **df_attrs)
 
 
 if __name__ == '__main__':

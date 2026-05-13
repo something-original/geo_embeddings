@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Any
 
 import pandas as pd
 import numpy as np
@@ -10,7 +11,6 @@ import json
 from pathlib import Path
 
 from config import (
-    BENCHMARK_LOG_PATH,
     CHECK_PEOPLE_WORKPLACES_TASKS,
     DEVICE,
     EXPERIMENT_TARGET_FEATURES,
@@ -58,15 +58,16 @@ os.makedirs("logs", exist_ok=True)
 setup_logging()
 logger = logging.getLogger(__name__)
 
-model = CatBoostRegressor()
 
+def create_and_prepare_tasks(
+    model: Any,
+    target_cols: list[str],
+) -> list[BaseTask]:
 
-def create_and_prepare_tasks() -> list[BaseTask]:
-    logger.info('Start!')
-    logger.info(f'Using device: {DEVICE}')
     logger.info('Creating tasks')
 
     task_datasets_paths = PathBuilder.build_tasks_dataset_paths()
+    emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
 
     flats_task = FlatsTask(
         dataset_path=task_datasets_paths['flats_dataset_path'],
@@ -117,6 +118,24 @@ def create_and_prepare_tasks() -> list[BaseTask]:
 
     tasks: list[BaseTask] = [fns_task_avg_bill, fns_task_kkt, flats_task]
 
+    municipalities_path = emb_dataset_paths['inference_full_path']
+    mun_cols = pd.read_csv(municipalities_path, sep=';', nrows=1).columns.tolist()
+    mun_features = [c for c in mun_cols if c not in ['id', 'geometry']]
+
+    for target_col in target_cols[1:]:
+        tasks.append(
+            MunDataTask(
+                dataset_path=municipalities_path,
+                features=mun_features,
+                target_col=target_col,
+                geom_col='geometry',
+                val_ratio=0.2,
+                model=model.copy(),
+                cat_features=[],
+                features_to_drop=target_cols,
+            )
+        )
+
     if CHECK_PEOPLE_WORKPLACES_TASKS:
         people_task = PeopleHousesTask(
             dataset_path=task_datasets_paths['people_dataset_path'],
@@ -139,7 +158,7 @@ def create_and_prepare_tasks() -> list[BaseTask]:
         )
         
         tasks.extend([people_task, workplaces_task])
-        
+
     for task in tasks:
         logger.info(f'Preparing dataset for task: {str(task)}, target: {task.target_col}')
         task.prepare_dataset()
@@ -149,31 +168,33 @@ def create_and_prepare_tasks() -> list[BaseTask]:
 
 def prepare_emb_dataset(
     features_to_drop: list[str],
-    index_feature: str
+    index_feature: str,
+    separate_inference: bool,
 ) -> tuple[dict, dict, StandardScaler, list[str]]:
 
     scaler = StandardScaler()
     emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
 
     target_col_names = prepare_and_save_dataset(
-        dataset_path=emb_dataset_paths['dataset_path'],
+        separate_inference=separate_inference,
+        dataset_path_old=emb_dataset_paths['dataset_path_old'],
+        dataset_path_new=emb_dataset_paths['dataset_path'],
         indicators_path=emb_dataset_paths['indicators_path'],
         features_to_drop=features_to_drop,
         index_feature=index_feature,
         experiment_target_features=EXPERIMENT_TARGET_FEATURES,
         train_path=emb_dataset_paths['train_path'],
-        train_full_path=emb_dataset_paths['train_full_path'],
         val_path=emb_dataset_paths['val_path'],
+        inference_full_path=emb_dataset_paths['inference_full_path'],
         csv_sep=';',
         use_scaler=True,
         scaler=scaler,
         test_size=0.25,
     )
 
-
     X_train = pd.read_csv(emb_dataset_paths['train_path'], sep=';')
     X_test = pd.read_csv(emb_dataset_paths['val_path'], sep=';')
-    X = pd.read_csv(emb_dataset_paths['train_full_path'], sep=';')
+    X = pd.read_csv(emb_dataset_paths['inference_full_path'], sep=';')
 
     target_cols = {}
     y_train = X_train[target_col_names[0]].copy()
@@ -229,15 +250,19 @@ def train_embedding_models(
     model_dict['deep_gnn_model'] = {}
     model_dict['deep_gnn_scaler'] = {}
     model_dict['deep_gnn_imputer'] = {}
+
     for d in emb_dims:
         logger.info('-----------')
         logger.info(f'Training GNN (emb_dim={d})')
         deep_gnn_model, deep_gnn_scaler, deep_gnn_imputer = train_gnn(
             X_train=X_train,
             y_train=y_train,
+            X_val=X_test,
+            y_val=y_test,
             device=DEVICE,
             output_path=os.path.join(models_save_paths['deep_gnn_output_path']),
             hidden_channels=d,
+            model_name="gnn",
         )
         model_dict['deep_gnn_model'][d] = deep_gnn_model
         model_dict['deep_gnn_scaler'][d] = deep_gnn_scaler
@@ -248,8 +273,12 @@ def train_embedding_models(
     tabpfn_model, tabpfn_target_scaler = train_tabpfn(
         X_train=X_train,
         y_train=y_train,
+        X_val=X_test,
+        y_val=y_test,
         output_path=models_save_paths['tabpfn_output_path'],
         device=DEVICE,
+        embed_dims=emb_dims,
+        model_name="tabpfn",
     )
     model_dict['tabpfn_model'] = tabpfn_model
     model_dict['tabpfn_target_scaler'] = tabpfn_target_scaler
@@ -266,6 +295,7 @@ def train_embedding_models(
             device=DEVICE,
             embed_dim=d,
             cols_to_drop=[index_feature] + list(target_col_names),
+            model_name="s2vec",
         )
         model_dict['s2vec_model'][d] = s2vec_model
 
@@ -283,7 +313,6 @@ def generate_embeddings(
 
     emb_save_paths = PathBuilder.build_embs_save_paths_by_dim(emb_dims)
     emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
-    municiplaities_path = emb_dataset_paths['municiplaities_path']
 
     for d in emb_dims:
         logger.info('----------')
@@ -306,8 +335,6 @@ def generate_embeddings(
             model=model_dict['tabpfn_model'],
             X=dataset_dict['X'],
             embs_save_path=emb_save_paths['tabpfn'][d],
-            # `prepare_and_save_dataset(use_scaler=True)` now scales `train_full_path`,
-            # so we must not apply the feature scaler again here.
             feature_scaler=None,
             train_medians=None,
             output_dim=d,
@@ -319,8 +346,7 @@ def generate_embeddings(
         get_s2vec_embeddings(
             model=model_dict['s2vec_model'][d],
             loader=get_dataloader(
-                # Generate for the full municipalities table, in deterministic order
-                csv_path=emb_dataset_paths['train_full_path'],
+                csv_path=emb_dataset_paths['inference_full_path'],
                 img_size=128,
                 batch_size=128,
                 shuffle=False,
@@ -330,7 +356,11 @@ def generate_embeddings(
             device=DEVICE,
         )
 
-    coords = get_geometry_points(index_col=index_dict['full_index'], dataset_path=municiplaities_path)
+    coords = get_geometry_points(
+        index_col=index_dict['full_index'],
+        dataset_path=emb_dataset_paths['municiplaities_path']
+    )
+
     for d in emb_dims:
         logger.info('----------')
         logger.info(f'Getting Satclip embeddings (emb_dim={d})')
@@ -498,6 +528,7 @@ def check_tasks_performance(
             for d, path in dim_map.items():
                 logger.info(f'\nSolving with embeddings from model {model_name}, dim={d}')
 
+                embeddings = None
                 try:
                     embeddings = load_embeddings(
                         emb_path=path,
@@ -556,6 +587,17 @@ def check_tasks_performance(
             wins=wins,
             emb_save_paths=emb_save_paths,
         )
+
+
+def checkpoint_model_path(model_name: str, emb_dim: int) -> Path | None:
+    root = Path(__file__).resolve().parent / "emb_fit" / "checkpoints"
+    stem = f"{model_name}_{emb_dim}"
+    sub = root / model_name / stem
+    for fn in (f"{stem}.pt", f"{stem}.pkl", f"{stem}.ckpt"):
+        p = sub / fn
+        if p.is_file():
+            return p
+    return None
 
 
 def upload_best_to_hf(
@@ -635,55 +677,58 @@ def upload_best_to_hf(
             commit_message=f"Upload summary for best embedding: {model_name}, dim={emb_dim}",
         )
         logger.info(f"Uploaded best embedding to HF: repo={HF_BEST_REPO_ID}, file={Path(emb_path).name}")
+        mp = checkpoint_model_path(model_name, emb_dim)
+        if mp is not None:
+            api.upload_file(
+                path_or_fileobj=str(mp),
+                path_in_repo=f"{path_in_repo_prefix}{mp.name}",
+                repo_id=HF_BEST_REPO_ID,
+                repo_type=HF_BEST_REPO_TYPE,
+                revision=HF_BEST_REPO_REVISION or None,
+                commit_message=f"Upload best model: {model_name}, dim={emb_dim}",
+            )
+            logger.info(f"Uploaded best model to HF: repo={HF_BEST_REPO_ID}, file={mp.name}")
+        else:
+            logger.warning(f"No checkpoint file for {best_pair}; skipping model upload.")
     except Exception as e:
         logger.warning(f"Failed to upload to HF ({HF_BEST_REPO_ID}): {e}")
 
 
-if __name__ == '__main__':
-    index_feature = 'municipality_id'
-    emb_dims = [128, 192, 256]
-    tasks = create_and_prepare_tasks()
-    
+def run_experiments(
+    model: Any,
+    train_and_generate_embs: bool,
+    index_feature: str,
+    features_to_drop: list[str],
+    emb_dims: list[int],
+    separate_inference: bool,
+):
+
+    logger.info('Start!')
+    logger.info(f'Using device: {DEVICE}')
+
+    word = "different" if separate_inference else "similar"
+    logger.info(f"Training and inference on {word} datasets")
+
     dataset_dict, index_dict, feature_scaler, target_cols = prepare_emb_dataset(
-        features_to_drop=[],
-        index_feature=index_feature
+        features_to_drop=features_to_drop,
+        index_feature=index_feature,
+        separate_inference=separate_inference,
     )
+    tasks = create_and_prepare_tasks(model, target_cols)
+    tasks = [tasks[1]]
 
-    emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
-    municipalities_path = emb_dataset_paths['municiplaities_path']
+    if train_and_generate_embs:
 
-    mun_cols = pd.read_csv(municipalities_path, sep=';', nrows=1).columns.tolist()
-    mun_features = [c for c in mun_cols if c not in ['id', 'geometry']]
-    base_tasks_n = len(tasks)
-
-    for target_col in target_cols:
-        tasks.append(
-            MunDataTask(
-                dataset_path=municipalities_path,
-                features=mun_features,
-                target_col=target_col,
-                geom_col='geometry',
-                val_ratio=0.2,
-                model=model.copy(),
-                cat_features=[],
-            )
-        )
-
-    for task in tasks[base_tasks_n:]:
-        logger.info(f'Preparing dataset for task: {str(task)}, target: {task.target_col}')
-        task.prepare_dataset()
-
-    train_and_generate_embeddings = True
-
-    if train_and_generate_embeddings:
         model_dict = train_embedding_models(
             dataset_dict=dataset_dict,
             index_feature=index_feature,
             emb_dims=emb_dims,
             target_col_names=target_cols,
         )
-        model_dict['feature_scaler'] = feature_scaler
         
+        model_dict = {}
+        model_dict['feature_scaler'] = feature_scaler
+
         generate_embeddings(
             model_dict=model_dict,
             index_feature=index_feature,
@@ -697,4 +742,16 @@ if __name__ == '__main__':
         tasks=tasks,
         index_dict=index_dict,
         emb_dims=emb_dims,
+    )
+
+
+if __name__ == '__main__':
+
+    run_experiments(
+        model=CatBoostRegressor(),
+        train_and_generate_embs=False,
+        index_feature='municipality_id',
+        features_to_drop=[],
+        emb_dims=[128, 192, 256],
+        separate_inference=True,
     )

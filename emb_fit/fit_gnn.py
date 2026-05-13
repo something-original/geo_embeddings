@@ -1,4 +1,5 @@
-import os
+import logging
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -9,17 +10,75 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import kneighbors_graph
 from sklearn.neighbors import NearestNeighbors
 from sklearn.impute import SimpleImputer
+from sklearn.metrics import root_mean_squared_error
 
 from torch_geometric.data import Data
 
 from emb_fit.models import DeepGNN
 from config import DEVICE
 
+logger = logging.getLogger(__name__)
+
+
+def _gnn_val_rmse(
+    model,
+    X_train_df: pd.DataFrame,
+    X_val_df: pd.DataFrame,
+    y_val: np.ndarray,
+    imputer: SimpleImputer,
+    target_scaler: StandardScaler,
+    n_neighbors: int,
+    device: str,
+) -> float:
+
+    X_train_imputed = imputer.transform(X_train_df.values)
+    X_val_imputed = imputer.transform(X_val_df.values)
+
+    n_full = X_val_imputed.shape[0]
+    n_train = X_train_imputed.shape[0]
+
+    k = max(1, min(n_neighbors, n_train))
+    A_train = kneighbors_graph(
+        X_train_imputed,
+        n_neighbors=k,
+        mode='connectivity',
+        include_self=False,
+    ).tocoo()
+
+    train_src = A_train.row + n_full
+    train_dst = A_train.col + n_full
+
+    nn = NearestNeighbors(n_neighbors=k)
+    nn.fit(X_train_imputed)
+
+    neigh_idx = nn.kneighbors(X_val_imputed, return_distance=False)
+    full_src = np.repeat(np.arange(n_full), k)
+    full_to_train_dst = neigh_idx.reshape(-1) + n_full
+
+    src = np.concatenate([train_src, full_src, full_to_train_dst])
+    dst = np.concatenate([train_dst, full_to_train_dst, full_src])
+
+    edge_index = torch.tensor(np.vstack([src, dst]), dtype=torch.long)
+    x_tensor = torch.tensor(
+        np.vstack([X_val_imputed, X_train_imputed]), dtype=torch.float32
+    ).to(device)
+
+    edge_index = edge_index.to(device)
+    model.eval()
+    with torch.no_grad():
+        out = model(x_tensor, edge_index).squeeze()[:n_full]
+
+    pred = target_scaler.inverse_transform(out.cpu().numpy().reshape(-1, 1)).flatten()
+
+    return float(root_mean_squared_error(y_val, pred))
+
 
 def train_gnn(
     X_train,
     y_train,
     device: str,
+    X_val=None,
+    y_val=None,
     output_path: str = "emb_fit/gnn_model.pt",
     hidden_channels: int = 128,
     out_channels: int = 1,
@@ -28,7 +87,8 @@ def train_gnn(
     n_epochs: int = 100,
     learning_rate: float = 0.001,
     columns_to_drop: list = None,
-    random_state: int = 42
+    random_state: int = 42,
+    model_name: str = "gnn",
 ):
     """
     Обучает GNN модель и сохраняет её.
@@ -134,6 +194,22 @@ def train_gnn(
 
     print("Обучение завершено")
 
+    if X_val is not None and y_val is not None:
+        if isinstance(X_val, np.ndarray):
+            X_val = pd.DataFrame(X_val)
+        if isinstance(y_val, np.ndarray):
+            y_val = np.asarray(y_val)
+        else:
+            y_val = y_val.values
+        Xv = X_val.copy()
+        if columns_to_drop:
+            Xv = Xv.drop(columns=[col for col in columns_to_drop if col in Xv.columns], errors='ignore')
+        Xv = Xv.reindex(columns=X_full.columns, fill_value=np.nan)
+        rmse = _gnn_val_rmse(
+            model, X_full, Xv, y_val, imputer, target_scaler, n_neighbors, device
+        )
+        logger.info(f"Metric for model {model_name}, RMSE: {rmse}")
+
     save_dict = {
         'model_state_dict': model.state_dict(),
         'model_config': {
@@ -149,10 +225,13 @@ def train_gnn(
         'n_neighbors': n_neighbors
     }
 
-    os.makedirs(output_path, exist_ok=True)
-    output_path = os.path.join(output_path, f'gnn_{hidden_channels}.pt')
-    torch.save(save_dict, output_path)
-    print(f"Модель сохранена: {output_path}")
+    embed_dim = hidden_channels
+    stem = f"{model_name}_{embed_dim}"
+    ck_dir = Path(__file__).resolve().parent / "checkpoints" / model_name / stem
+    ck_dir.mkdir(parents=True, exist_ok=True)
+    ck_file = ck_dir / f"{stem}.pt"
+    torch.save(save_dict, ck_file)
+    print(f"Model saved to: {ck_file}")
 
     return model, scaler, imputer
 

@@ -6,6 +6,7 @@ SatCLIP - это модель, которая обучается сопоста�
 без необходимости в изображениях.
 """
 
+import shutil
 import numpy as np
 import torch
 from pathlib import Path
@@ -138,9 +139,14 @@ def get_satclip_embeddings(
         embeddings = pca.fit_transform(embeddings)
         print(f"Эмбеддинги после PCA: форма {embeddings.shape}")
 
-    # Сохраняем если указан путь
     if output_path is not None:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(output_path, embeddings)
         print(f"Эмбеддинги сохранены: {output_path}")
+
+    d_ck = output_dim if output_dim is not None else int(embeddings.shape[1])
+    stem = f"satclip_{d_ck}"
+    ck_dir = Path(__file__).resolve().parent / "checkpoints" / "satclip" / stem
+    ck_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(checkpoint_path, ck_dir / f"{stem}.ckpt")

@@ -13,6 +13,7 @@ from zipfile import ZipFile
 from tqdm import tqdm
 
 from config import TOCHNO_ST_BASE_LINK
+from typing import Optional
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -203,6 +204,66 @@ class IndicatorFeatureStore:
         return result_df
 
 
+def align_old_new_indicator_values(
+    df_new: pl.DataFrame,
+    df_old: pl.DataFrame,
+    key: str = "municipality_id",
+    nan_threshold: float = 0.9,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """
+    Align two wide indicator tables: same municipalities, same columns.
+    Missing cells become null. Drop columns where the OLD table has >= nan_threshold null ratio.
+    """
+    if df_new.is_empty() and df_old.is_empty():
+        return df_new, df_old
+    if df_old.is_empty():
+        raise ValueError(
+            "indicator_values_old is empty: need at least two calendar years per (municipality_id, indicator_code)."
+        )
+
+    ids = pl.concat(
+        [df_new.select(key), df_old.select(key)],
+        how="vertical",
+    ).unique(maintain_order=True)
+    master = ids.sort(key)
+
+    new_j = master.join(df_new, on=key, how="left")
+    old_j = master.join(df_old, on=key, how="left")
+
+    feat_new = [c for c in new_j.columns if c != key]
+    feat_old = [c for c in old_j.columns if c != key]
+    all_feats = sorted(set(feat_new) | set(feat_old))
+
+    for c in all_feats:
+        if c not in new_j.columns:
+            new_j = new_j.with_columns(pl.lit(None).cast(pl.Float64).alias(c))
+        if c not in old_j.columns:
+            old_j = old_j.with_columns(pl.lit(None).cast(pl.Float64).alias(c))
+
+    ordered = [key] + [c for c in all_feats if c != key]
+    new_j = new_j.select(ordered)
+    old_j = old_j.select(ordered)
+
+    n = old_j.height
+    if n == 0:
+        return new_j, old_j
+
+    drop_cols: list[str] = []
+    for c in all_feats:
+        if c == key:
+            continue
+        null_ratio = old_j[c].null_count() / n
+        if null_ratio >= nan_threshold:
+            drop_cols.append(c)
+
+    if drop_cols:
+        logger.info(f"Dropping {len(drop_cols)} indicator columns with >= {nan_threshold:.0%} nulls in OLD data")
+        new_j = new_j.drop(drop_cols)
+        old_j = old_j.drop(drop_cols)
+
+    return new_j, old_j
+
+
 def parse_mun_data(root_dir):
     logger.info("Start")
 
@@ -220,6 +281,7 @@ def parse_mun_data(root_dir):
     base_indicators_store = FeatureStore("base_indicators", ["id", "name", "unit_id"], ["name", "unit_id"])
     indicators_store = FeatureStore("indicators", ["id", "code", "name"], "code")
     indicator_values_store = IndicatorFeatureStore('municipality_id')
+    indicator_values_old_store = IndicatorFeatureStore('municipality_id')
 
     special_stores = {}
 
@@ -278,7 +340,7 @@ def parse_mun_data(root_dir):
 
         df = df.with_columns(pl.col("oktmo_stable").cast(pl.Utf8))
         if df['year'].max() >= 2020:
-            df = df.filter(pl.col("year") >= 2020).select(df.columns)
+            df = df.filter(pl.col("year") >= 2019).select(df.columns)
 
         cols_to_drop = [
             "indicator_section_code", "indicator_section", "indicator_period",
@@ -431,10 +493,31 @@ def parse_mun_data(root_dir):
             values_df = values_df.with_columns((pl.lit("ind") + pl.col("base_id").cast(pl.String)).alias("indicator_code"))
 
         values_df = values_df.drop("base_id")
-        values_df = values_df.filter(pl.col("year") == pl.col("year").max().over(["indicator_code", "municipality_id"]))\
-            .drop("year").pivot(values="indicator_value", index="municipality_id", on="indicator_code", aggregate_function="first")
+        ranked = values_df.with_columns(
+            pl.col("year")
+            .rank(method="dense", descending=True)
+            .over(["indicator_code", "municipality_id"])
+            .alias("_yr_rank")
+        )
+        new_long = ranked.filter(pl.col("_yr_rank") == 1).drop("_yr_rank", "year")
+        old_long = ranked.filter(pl.col("_yr_rank") == 2).drop("_yr_rank", "year")
 
-        indicator_values_store.update(values_df)
+        if new_long.height > 0:
+            new_wide = new_long.pivot(
+                on="indicator_code",
+                index="municipality_id",
+                values="indicator_value",
+                aggregate_function="first",
+            )
+            indicator_values_store.update(new_wide)
+        if old_long.height > 0:
+            old_wide = old_long.pivot(
+                on="indicator_code",
+                index="municipality_id",
+                values="indicator_value",
+                aggregate_function="first",
+            )
+            indicator_values_old_store.update(old_wide)
 
         for ef in extracted_files:
             if os.path.isdir(ef):
@@ -479,10 +562,20 @@ def parse_mun_data(root_dir):
         if not final.is_empty():
             final.write_csv(os.path.join(folder_path, f"{name}.csv"), **write_settings)
 
-    final_vals = indicator_values_store.finalize()
-    final_vals.write_csv(os.path.join(folder_path, "indicator_values.csv"), **write_settings)
+    final_new = indicator_values_store.finalize()
+    final_old = indicator_values_old_store.finalize()
 
-    logger.info("Processing complete.")
+    if final_old.is_empty():
+        raise ValueError(
+            "No second-year (previous year) indicator rows were produced. "
+            "Ensure input data contains at least two distinct years per (municipality_id, indicator_code)."
+        )
+
+    aligned_new, aligned_old = align_old_new_indicator_values(final_new, final_old)
+    aligned_new.write_csv(os.path.join(folder_path, "indicator_values.csv"), **write_settings)
+    aligned_old.write_csv(os.path.join(folder_path, "indicator_values_old.csv"), **write_settings)
+
+    logger.info("Processing complete (indicator_values = latest year, indicator_values_old = second-latest).")
 
 
 if __name__ == "__main__":

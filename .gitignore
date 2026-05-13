@@ -19,6 +19,8 @@ __MACOSX/
 *.ckpt
 checkpoints/
 *.pkl
+lightning_logs/
+.cursor/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

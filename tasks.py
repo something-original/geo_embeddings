@@ -33,6 +33,7 @@ class BaseTask(ABC):
         dataset_link: str | None = None,
         dataset_crs: str = "EPSG:4326",
         cat_features: list[str] = [],
+        features_to_drop: list[str] = [],
     ):
         super().__init__()
         self.dataset_link = dataset_link
@@ -61,7 +62,7 @@ class BaseTask(ABC):
         self._y_full: pd.Series | None = None
 
         self._initial_split_index: dict[str, pd.Index] | None = None
-
+        self.features_to_drop = features_to_drop
 
     def __str__(self) -> str:
         return self.task_name
@@ -295,27 +296,10 @@ class MunDataTask(BaseTask):
     
     def _load_dataset(self):
         mun_df = pd.read_csv(self.dataset_path, sep=';', encoding='utf-8')
-        if self.geom_col in mun_df.columns and isinstance(mun_df[self.geom_col].iloc[0], str):
-            mun_df[self.geom_col] = mun_df[self.geom_col].apply(wkt.loads)
 
-        mun_gdf = gpd.GeoDataFrame(mun_df).set_geometry(self.geom_col).set_crs(self.dataset_crs).to_crs(self.crs)
-
-        emb_paths = PathBuilder.build_emb_datasets_paths()
-        indicators_full = pd.read_csv(emb_paths['train_full_path'], sep=';', encoding='utf-8')
-
-        targets = indicators_full[['municipality_id', self.target_col]].copy()
-
-        merged = mun_gdf.merge(targets, how='inner', left_on='id', right_on='municipality_id')
-        merged = merged.set_index('municipality_id', drop=True)
-
-        for c in self.features:
-            if c not in merged.columns:
-                continue
-            if merged[c].dtype == 'object':
-                merged[c] = pd.factorize(merged[c])[0].astype('int32')
-
-        X = merged[self.features + [self.geom_col]].copy()
-        y = merged[self.target_col].copy()
+        X = mun_df[self.features].copy()
+        X = X.drop(columns=self.features_to_drop, errors='ignore')
+        y = mun_df[self.target_col].copy()
 
         return X, y
 
@@ -363,3 +347,49 @@ class MunDataTask(BaseTask):
         self.features = cache["features"]
         self.cat_features = cache["cat_features"]
         self._baseline_splits_cache = None
+
+    def prepare_dataset(self) -> None:
+        X, y = self._load_dataset()
+        
+        not_nan_index = y[~y.isna()].index
+        X = X[X.index.isin(not_nan_index)]
+        y = y[y.index.isin(not_nan_index)]
+        
+        self._X_full = X.copy()
+        self._y_full = y.copy()
+
+        self._set_splits_from_xy(X, y)
+        self._initial_split_index = {
+            "train": self.x_train.index.copy(),
+            "val": self.x_val.index.copy(),
+            "test": self.x_test.index.copy(),
+        }
+        
+        self.features = [f for f in self.features if f not in self.features_to_drop]
+
+    def resplit_on_index(self, row_index: pd.Index | list) -> None:
+        """
+        Rebuild train/val/test on a subset of the full dataset (used to align
+        baseline splits with rows that have embeddings).
+        """
+        if self._X_full is None or self._y_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+
+        X = self._X_full.loc[row_index]
+        y = self._y_full.loc[row_index]
+        self._set_splits_from_xy(X, y)
+
+    def reset_splits(self) -> None:
+        if self._X_full is None or self._y_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+        if not self._initial_split_index:
+            raise RuntimeError("Initial split cache is missing.")
+
+        X = self._X_full
+        y = self._y_full
+        self.x_train = X.loc[self._initial_split_index["train"]]
+        self.y_train = y.loc[self._initial_split_index["train"]]
+        self.x_val = X.loc[self._initial_split_index["val"]]
+        self.y_val = y.loc[self._initial_split_index["val"]]
+        self.x_test = X.loc[self._initial_split_index["test"]]
+        self.y_test = y.loc[self._initial_split_index["test"]]
