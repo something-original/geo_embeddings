@@ -725,8 +725,6 @@ def run_experiments(
             emb_dims=emb_dims,
             target_col_names=target_cols,
         )
-        
-        model_dict = {}
         model_dict['feature_scaler'] = feature_scaler
 
         generate_embeddings(

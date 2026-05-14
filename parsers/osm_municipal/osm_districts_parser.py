@@ -1,5 +1,5 @@
-import aiohttp
 import asyncio
+import aiohttp
 import os
 import pandas as pd
 import geopandas as gpd
@@ -10,6 +10,10 @@ import subprocess
 
 import ssl
 import certifi
+
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from .db import municipalities_has_geometry_column, sync_municipalities_geometry_postgis
 
 
 async def load_mun_geometry(mun_data_geom_link, save_path):
@@ -22,7 +26,10 @@ async def load_mun_geometry(mun_data_geom_link, save_path):
                 f.write(await resp.read())
 
 
-async def form_mun_geometry():
+async def form_mun_geometry(engine: AsyncEngine | None = None):
+
+    if engine is not None and await municipalities_has_geometry_column(engine):
+        return
 
     root_dir = Path(__file__).resolve().parents[2]
 
@@ -71,6 +78,7 @@ async def form_mun_geometry():
 
     mun_geometry = mun_geometry[['territory_id', 'geometry']]
     mun_geometry['territory_id'] = mun_geometry['territory_id'].apply(int)
+    mun_geometry_crs = mun_geometry.crs
 
     mun_geometry = mun_points.merge(mun_geometry, how='left')
     mun_geometry.drop(columns=['territory_id'], inplace=True)
@@ -86,10 +94,21 @@ async def form_mun_geometry():
 
     mun_districts_df = mun_districts_df.drop_duplicates(subset=['id'])
 
+    if engine is not None and 'geometry' in mun_districts_df.columns:
+        gdf = gpd.GeoDataFrame(
+            mun_districts_df,
+            geometry='geometry',
+            crs=mun_geometry_crs,
+        )
+        epsg = gdf.crs.to_epsg() if gdf.crs is not None else None
+        srid = int(epsg) if epsg is not None else 4326
+        id_wkb = [
+            (int(r['id']), r['geometry'].wkb)
+            for _, r in gdf.iterrows()
+            if r['geometry'] is not None and not r['geometry'].is_empty
+        ]
+        await sync_municipalities_geometry_postgis(engine, id_wkb, srid)
+
     mun_districts_df.to_csv(mun_districts_df_path, index=False, **df_attrs)
     indicators_df.to_csv(indicators_df_path, index=False, **df_attrs)
-    indicators_df_old.to_csv(indicators_df_path, index=False, **df_attrs)
-
-
-if __name__ == '__main__':
-    form_mun_geometry()
+    indicators_df_old.to_csv(old_indicators_df_path, index=False, **df_attrs)

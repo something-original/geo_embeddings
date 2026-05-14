@@ -62,11 +62,6 @@ class PathBuilder:
 
     @classmethod
     def build_embs_save_paths_by_dim(cls, emb_dims: list[int]) -> dict[str, dict[int, str]]:
-        """
-        Build per-model embedding output paths for multiple embedding dimensions.
-
-        File naming convention: *_embs_{dim}.npy
-        """
         models_save_paths = cls.build_models_save_paths()
         base = {
             'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs'),

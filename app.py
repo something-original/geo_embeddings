@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import text
 
 from utils import setup_logging
+from embedding_qdrant import ensure_inference_embeddings_qdrant_async
 
 
 setup_logging()
@@ -29,11 +30,18 @@ async def get_session():
 async def lifespan(app: FastAPI):
     try:
         root_dir = Path(__file__).resolve().parent
-        await parse_mun_data(root_dir)
-        await form_mun_geometry()
-        yield
-    except KeyboardInterrupt:
-        pass
+        await parse_mun_data(root_dir, engine)
+        await form_mun_geometry(engine)
+        await ensure_inference_embeddings_qdrant_async()
+
+        logger.info("Startup complete")
+    except Exception as e:
+        logger.error(f"Startup failed: {e}")
+        raise
+
+    yield
+    logger.info("Shutting down")
+    await engine.dispose()
 
 app = FastAPI(lifespan=lifespan)
 
