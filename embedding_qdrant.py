@@ -47,6 +47,17 @@ from utils import PathBuilder, prepare_mun_df
 
 logger = logging.getLogger(__name__)
 
+
+def make_qdrant_client() -> QdrantClient:
+    return QdrantClient(
+        host=QDRANT_HOST,
+        port=QDRANT_PORT,
+        api_key=QDRANT_API_KEY or None,
+        https=QDRANT_HTTPS,
+        prefer_grpc=False,
+    )
+
+
 INDEX_FEATURE = "municipality_id"
 EMB_DIMS_DEFAULT = [128, 192, 256]
 
@@ -320,13 +331,7 @@ def _vectors_to_qdrant(municipality_ids: np.ndarray, vectors: np.ndarray) -> Non
             f"municipality_ids ({len(municipality_ids)}) vs vectors ({len(vectors)}) length mismatch"
         )
     vec_size = int(vectors.shape[1])
-    client = QdrantClient(
-        host=QDRANT_HOST,
-        port=QDRANT_PORT,
-        api_key=QDRANT_API_KEY or None,
-        https=QDRANT_HTTPS,
-        prefer_grpc=False,
-    )
+    client = make_qdrant_client()
     names = {c.name for c in client.get_collections().collections}
     if QDRANT_COLLECTION not in names:
         client.create_collection(
