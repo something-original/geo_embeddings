@@ -21,6 +21,7 @@ checkpoints/
 *.pkl
 lightning_logs/
 .cursor/
+.env.example
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
