@@ -6,15 +6,11 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 from sklearn.model_selection import train_test_split
-import optuna
-from sklearn.metrics import root_mean_squared_error, mean_absolute_error, r2_score
-from scipy.stats import pearsonr
 
 from pathlib import Path
 import os
 from shapely import Polygon, wkt
 
-from utils import PathBuilder
 
 logger = logging.getLogger(__name__)
 

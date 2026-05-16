@@ -125,7 +125,7 @@ def get_s2vec_embeddings(
             imgs, _ = batch
             imgs = imgs.to(device)
 
-            latent, _, _ = model.encode(imgs)
+            latent, _, _ = model.encode(imgs, mask_inputs=False)
             cls_embeddings = latent[:, 0, :]
 
             embeddings_list.append(cls_embeddings.cpu().numpy())

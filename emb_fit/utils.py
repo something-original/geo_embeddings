@@ -109,49 +109,59 @@ def prepare_and_save_dataset(
     nan_fill_threshold: float = 0.9,
 ) -> list[str]:
 
-    df_old = pd.read_csv(dataset_path_old, sep=csv_sep)
     df_new = pd.read_csv(dataset_path_new, sep=csv_sep)
 
-    df_old.drop(columns=features_to_drop, inplace=True, errors='ignore')
+    if separate_inference:
+        df_old = pd.read_csv(dataset_path_old, sep=csv_sep)
+        df_old.drop(columns=features_to_drop, inplace=True, errors='ignore')
+        df_old = df_old[df_old[index_feature].isin(df_new[index_feature])]
+        logger.info(f'OLD shape: {df_old.shape}, NEW shape: {df_new.shape}')
+        mask_all_nan_old = df_old.isna().all(axis=1)
+        df_old = df_old[~mask_all_nan_old].reset_index(drop=True)
+        df_old = df_old.select_dtypes(include=[np.number])
+        df_old = df_old.replace([np.inf, -np.inf], np.nan)
+
+        if index_feature not in df_old.columns:
+            raise ValueError(f'{index_feature} must be a column in old indicator CSV')
+
     df_new.drop(columns=features_to_drop, inplace=True, errors='ignore')
 
-    df_old = df_old[df_old['municipality_id'].isin(df_new['municipality_id'])]
-    logger.info(f'OLD shape: {df_old.shape}, NEW shape: {df_new.shape}')
-
-    mask_all_nan_old = df_old.isna().all(axis=1)
     mask_all_nan_new = df_new.isna().all(axis=1)
-    df_old = df_old[~mask_all_nan_old].reset_index(drop=True)
+
     df_new = df_new[~mask_all_nan_new].reset_index(drop=True)
-
-    df_old = df_old.select_dtypes(include=[np.number])
     df_new = df_new.select_dtypes(include=[np.number])
-
-    df_old = df_old.replace([np.inf, -np.inf], np.nan)
     df_new = df_new.replace([np.inf, -np.inf], np.nan)
 
-    if index_feature not in df_old.columns or index_feature not in df_new.columns:
+    if index_feature not in df_new.columns:
         raise ValueError(f'{index_feature} must be a column in both old and new indicator CSVs')
 
-    common_ids = sorted(set(df_old[index_feature]) & set(df_new[index_feature]))
-    df_old = df_old[df_old[index_feature].isin(common_ids)].sort_values(index_feature).reset_index(drop=True)
-    df_new = df_new[df_new[index_feature].isin(common_ids)].sort_values(index_feature).reset_index(drop=True)
+    if separate_inference:
+        common_ids = sorted(set(df_old[index_feature]) & set(df_new[index_feature]))
+        df_old = df_old[df_old[index_feature].isin(common_ids)].sort_values(index_feature).reset_index(drop=True)
+        df_new = df_new[df_new[index_feature].isin(common_ids)].sort_values(index_feature).reset_index(drop=True)
 
-    all_cols = sorted(set(df_old.columns) | set(df_new.columns))
-    for c in all_cols:
-        if c not in df_old.columns:
-            df_old[c] = np.nan
-        if c not in df_new.columns:
-            df_new[c] = np.nan
-    df_old = df_old[all_cols]
-    df_new = df_new[all_cols]
+        all_cols = sorted(set(df_old.columns) | set(df_new.columns))
+        for c in all_cols:
+            if c not in df_old.columns:
+                df_old[c] = np.nan
+            if c not in df_new.columns:
+                df_new[c] = np.nan
+        df_old = df_old[all_cols]
+        df_new = df_new[all_cols]
 
-    logger.info(f'Nan threshold (drop by OLD): {nan_fill_threshold}')
-    nan_ratio_old = df_old.isnull().mean()
-    cols_to_drop = nan_ratio_old[nan_ratio_old >= nan_fill_threshold].index
+    logger.info(f'Nan threshold: {nan_fill_threshold}')
+    if separate_inference:
+        nan_ratio_old = df_old.isnull().mean()
+        cols_to_drop = nan_ratio_old[nan_ratio_old >= nan_fill_threshold].index
+    else:
+        nan_ratio_new = df_new.isnull().mean()
+        cols_to_drop = nan_ratio_new[nan_ratio_new >= nan_fill_threshold].index
     cols_to_drop = [c for c in cols_to_drop if c != index_feature]
+
     if len(cols_to_drop):
         logger.info(f'Columns dropped (>= {nan_fill_threshold:.0%} NaN in OLD): {len(cols_to_drop)}')
-        df_old = df_old.drop(columns=cols_to_drop, errors='ignore')
+        if separate_inference:
+            df_old = df_old.drop(columns=cols_to_drop, errors='ignore')
         df_new = df_new.drop(columns=cols_to_drop, errors='ignore')
 
     df_base_indicators = pd.read_csv(indicators_path, sep=csv_sep)
@@ -166,14 +176,28 @@ def prepare_and_save_dataset(
         for tid in target_feature_ids:
             target_feature_col_name = f'target_{tid}'
             target_feature_col_names.append(target_feature_col_name)
-            id_cols_old = [col for col in df_old.columns if f'ind{str(tid)}' in col]
-            id_cols_new = [col for col in df_new.columns if f'ind{str(tid)}' in col]
-            df_old[target_feature_col_name] = np.nansum(df_old[id_cols_old].values, axis=1)
-            df_new[target_feature_col_name] = np.nansum(df_new[id_cols_new].values, axis=1)
-            df_old.drop(columns=id_cols_old, inplace=True)
-            df_new.drop(columns=id_cols_new, inplace=True)
 
-    df_old = df_old.set_index(index_feature)
+            if separate_inference:
+                id_cols_old = [col for col in df_old.columns if f'ind{str(tid)}' in col]
+                df_old[target_feature_col_name] = np.nansum(df_old[id_cols_old].values, axis=1)
+                df_old.drop(columns=id_cols_old, inplace=True)
+
+            id_cols_new = [col for col in df_new.columns if f'ind{str(tid)}' in col]
+            df_new[target_feature_col_name] = np.nansum(df_new[id_cols_new].values, axis=1)
+            df_new.drop(columns=id_cols_new, inplace=True)
+    else:
+        target_feature_col_names = [
+            c for c in df_new.columns if str(c).startswith('target_')
+        ]
+        if separate_inference:
+            target_feature_col_names = sorted(
+                set(target_feature_col_names)
+                | {c for c in df_old.columns if str(c).startswith('target_')}
+            )
+
+    if separate_inference:
+        df_old = df_old.set_index(index_feature)
+
     df_new = df_new.set_index(index_feature)
 
     df_train, df_val = train_test_split(

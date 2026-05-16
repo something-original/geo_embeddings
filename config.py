@@ -52,3 +52,9 @@ QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "municipality_embeddings")
 QDRANT_HTTPS = (os.getenv("QDRANT_HTTPS") or "false").lower() == "true"
+
+# true: parse_mun_data + form_mun_geometry + Qdrant sync on startup; false: wait for API uploads
+INIT_EMBEDDINGS = (os.getenv("INIT_EMBEDDINGS") or "true").lower() == "true"
+
+# Path to 7z/p7zip binary (Docker: /usr/bin/7z); empty = search PATH
+SEVEN_ZIP_BIN = os.getenv("SEVEN_ZIP_BIN") or os.getenv("SEVENZIP_BIN") or ""

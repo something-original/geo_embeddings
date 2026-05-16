@@ -148,6 +148,9 @@ celerybeat.pid
 
 # Environments
 .env
+secrets/*
+!secrets/.gitkeep
+!secrets/README
 .venv
 env/
 venv/

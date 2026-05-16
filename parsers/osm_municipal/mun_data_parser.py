@@ -271,7 +271,8 @@ def align_old_new_indicator_values(
 
 async def parse_mun_data(
     root_dir: str,
-    engine: AsyncEngine
+    engine: AsyncEngine,
+    use_old: bool = False
 ):
     logger.info("Start")
 
@@ -580,11 +581,14 @@ async def parse_mun_data(
                 "Ensure input data contains at least two distinct years per (municipality_id, indicator_code)."
             )
 
-        aligned_new, aligned_old = align_old_new_indicator_values(final_new, final_old)
-        aligned_new.write_csv(os.path.join(folder_path, "indicator_values.csv"), **write_settings)
-        aligned_old.write_csv(os.path.join(folder_path, "indicator_values_old.csv"), **write_settings)
+        if use_old:
+            aligned_new, aligned_old = align_old_new_indicator_values(final_new, final_old)
+            aligned_new.write_csv(os.path.join(folder_path, "indicator_values.csv"), **write_settings)
+            aligned_old.write_csv(os.path.join(folder_path, "indicator_values_old.csv"), **write_settings)
 
-        logger.info("Processing complete (indicator_values = latest year, indicator_values_old = second-latest).")
+            logger.info("Processing complete (indicator_values = latest year, indicator_values_old = second-latest).")
+        else:
+            final_new.write_csv(os.path.join(folder_path, "indicator_values.csv"), **write_settings)
 
     if list(folder_path.glob("*.csv")):
         await load_mun_csvs_to_database(engine, folder_path)

@@ -9,7 +9,12 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 _SKIP_TOKENS = frozenset({"full", "inference", "val", "train"})
-_INDICATOR_STEMS = frozenset({"indicator_values", "indicator_values_old"})
+_INDICATOR_STEMS = frozenset({
+    "indicator_values",
+    "indicator_values_old",
+    "indicator_values_train",
+    "indicator_values_inference",
+})
 
 
 def _qi(ident: str) -> str:

@@ -5,8 +5,10 @@ import pandas as pd
 import geopandas as gpd
 
 from pathlib import Path
-from config import MUN_GEOMS_LINK
+import shutil
 import subprocess
+
+from config import MUN_GEOMS_LINK, SEVEN_ZIP_BIN
 
 import ssl
 import certifi
@@ -14,6 +16,23 @@ import certifi
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .db import municipalities_has_geometry_column, sync_municipalities_geometry_postgis
+
+
+def resolve_seven_zip_bin() -> str:
+    """Return path to 7z executable (SEVEN_ZIP_BIN env or PATH)."""
+    if SEVEN_ZIP_BIN:
+        p = Path(SEVEN_ZIP_BIN)
+        if p.is_file():
+            return str(p.resolve())
+        raise FileNotFoundError(f"SEVEN_ZIP_BIN is set but not found: {SEVEN_ZIP_BIN}")
+    for name in ("7z", "7zz", "7za"):
+        found = shutil.which(name)
+        if found:
+            return found
+    raise RuntimeError(
+        "7z not found. Install p7zip (e.g. apt install p7zip-full) "
+        "or set SEVEN_ZIP_BIN to the binary path."
+    )
 
 
 async def load_mun_geometry(mun_data_geom_link, save_path):
@@ -51,8 +70,13 @@ async def form_mun_geometry(engine: AsyncEngine | None = None):
         await load_mun_geometry(MUN_GEOMS_LINK, save_path)
 
     files_before = set(save_folder.rglob('*'))
-    unpack_cmd = ["7z", "x", save_path, f"-o{save_folder}", "-y"]
-    subprocess.run(unpack_cmd, stdout=subprocess.PIPE)
+    seven_zip = resolve_seven_zip_bin()
+    unpack_cmd = [seven_zip, "x", save_path, f"-o{save_folder}", "-y"]
+    result = subprocess.run(unpack_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"7z failed (exit {result.returncode}): {result.stderr.decode(errors='replace')}"
+        )
 
     os.remove(save_path)
     files_after = set(save_folder.rglob('*'))

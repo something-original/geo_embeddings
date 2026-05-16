@@ -1,0 +1,91 @@
+# Secrets: create files under ./secrets/ from your .env (see .env.example).
+#   ./scripts/prepare-docker-secrets.sh
+#
+# Non-secret config: copy .env.example -> .env and adjust.
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-geo_embeddings}
+      POSTGRES_USER: ${DB_USER:-georgiykiselev}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USER:-georgiykiselev} -d ${DB_NAME:-geo_embeddings}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - geo_net
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - geo_net
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    ports:
+      - "${PORT:-1414}:1414"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      INIT_EMBEDDINGS: ${INIT_EMBEDDINGS:-true}
+      SEVEN_ZIP_BIN: /usr/bin/7z
+      HOST: 0.0.0.0
+    secrets:
+      - db_password
+      - hf_token
+      - qdrant_api_key
+    volumes:
+      - app_datasets:/app/datasets/mun_data
+      - app_uploads:/app/datasets/uploads
+      - app_logs:/app/logs
+      - app_checkpoints:/app/emb_fit/checkpoints
+    networks:
+      - geo_net
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  hf_token:
+    file: ./secrets/hf_token
+  qdrant_api_key:
+    file: ./secrets/qdrant_api_key
+
+volumes:
+  pgdata:
+  qdrant_data:
+  app_datasets:
+  app_uploads:
+  app_logs:
+  app_checkpoints:
+
+networks:
+  geo_net:
+    driver: bridge

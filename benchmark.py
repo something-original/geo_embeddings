@@ -212,7 +212,7 @@ def prepare_emb_dataset(
     X_train.drop(columns=target_col_names + [index_feature], inplace=True)
     X_test.drop(columns=target_col_names + [index_feature], inplace=True)
     X.drop(columns=target_col_names + [index_feature], inplace=True)
-    
+
     dataset_dict = {
         'X': X,
         'X_train': X_train,
@@ -751,5 +751,5 @@ if __name__ == '__main__':
         index_feature='municipality_id',
         features_to_drop=[],
         emb_dims=[128, 192, 256],
-        separate_inference=True,
+        separate_inference=False,
     )

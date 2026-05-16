@@ -254,21 +254,37 @@ class S2VecModel(Model):
 
         return x_masked, mask, ids_restore
 
-    def encode(self, x: "torch.Tensor") -> "torch.Tensor":
+    def encode(
+        self,
+        x: "torch.Tensor",
+        *,
+        mask_inputs: bool = True,
+    ) -> tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
         """
         Forward pass of the encoder.
 
         Args:
-            x (torch.Tensor): The input tensor. The dimensions are
-                (batch_size, num_patches, embed_dim).
+            x: Input images, shape (batch_size, in_ch, img_size, img_size).
+            mask_inputs: If True (default), random patch masking for MAE training/inference.
+                If False, all patches are passed to the encoder (deterministic embeddings).
 
         Returns:
-            torch.Tensor: The output tensor from the encoder.
+            Encoder output (batch, 1 + num_kept_or_all_patches, embed_dim), binary mask,
+            and indices to restore patch order.
         """
         x = self.patch_embed(x)
         x = x + self.pos_embed[:, 1:, :]  # Add positional embedding, excluding class token
 
-        x, mask, ids_restore = self.random_masking(x)
+        b, n, _ = x.shape
+        if mask_inputs:
+            x, mask, ids_restore = self.random_masking(x)
+        else:
+            mask = torch.zeros(b, n, device=x.device, dtype=x.dtype)
+            ids_restore = (
+                torch.arange(n, device=x.device, dtype=torch.long)
+                .unsqueeze(0)
+                .expand(b, -1)
+            )
 
         cls_token = self.cls_token + self.pos_embed[:, :1, :]  # Class token
         cls_tokens = cls_token.expand(x.shape[0], -1, -1)  # Expand class token to batch size
@@ -320,7 +336,7 @@ class S2VecModel(Model):
             the target tensor, and the mask.
         """
 
-        latent, mask, ids_restore = self.encode(inputs)
+        latent, mask, ids_restore = self.encode(inputs, mask_inputs=True)
         pred = self.decode(latent, ids_restore)
         target = self.patchify(inputs)
         return pred, target, mask

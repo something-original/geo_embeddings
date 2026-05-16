@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import numpy as np
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Response, status
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from parsers.osm_municipal import parse_mun_data, form_mun_geometry
 from shapely import make_valid
@@ -16,7 +16,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 import uvicorn
 
-from config import DB_URL, HOST, PORT, QDRANT_COLLECTION
+from config import DB_URL, HOST, INIT_EMBEDDINGS, PORT, QDRANT_COLLECTION
+from api.routes import (
+    register_dataset_routes,
+    register_embedding_routes,
+    register_stats_routes,
+)
 from embedding_qdrant import ensure_inference_embeddings_qdrant_async, make_qdrant_client
 from utils import setup_logging
 
@@ -33,13 +38,24 @@ async def get_session():
         yield session
 
 
+async def get_engine():
+    yield engine
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        root_dir = Path(__file__).resolve().parent
-        await parse_mun_data(root_dir, engine)
-        await form_mun_geometry(engine)
-        await ensure_inference_embeddings_qdrant_async()
+        if INIT_EMBEDDINGS:
+            root_dir = Path(__file__).resolve().parent
+            logger.info("INIT_EMBEDDINGS=true: loading default municipal datasets into DB")
+            await parse_mun_data(root_dir, engine)
+            await form_mun_geometry(engine)
+            await ensure_inference_embeddings_qdrant_async()
+        else:
+            logger.info(
+                "INIT_EMBEDDINGS=false: skipping parse_mun_data / form_mun_geometry; "
+                "waiting for dataset uploads via API"
+            )
 
         logger.info("Startup complete")
     except Exception as e:
@@ -219,26 +235,9 @@ async def embeddings_from_polygon(
     )
 
 
-@stats_router.get("/{query}")
-async def test_get(query: int, session=Depends(get_session)):
-    res = (await session.execute(
-        text(f"SELECT {query};")
-    )).scalar()
-    return res
-
-
-@stats_router.post("/")
-async def test_post(data: dict, session=Depends(get_session)):
-    query = data.get("query", 0)
-    if query == 0:
-        msg = "zero!"
-        return Response(msg, status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    res = (await session.execute(
-        text(f"SELECT {query};")
-    )).scalar()
-    return {"res": res}
-
+register_dataset_routes(datasets_router)
+register_embedding_routes(embedding_router)
+register_stats_routes(stats_router, get_engine)
 
 app.include_router(embedding_router)
 app.include_router(datasets_router)
