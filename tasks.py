@@ -195,7 +195,9 @@ class BaseTask(ABC):
         self.features.extend(list(emb_col_set))
 
         self._drop_cols([self.geom_col])
-        logger.info(f'Features after adding embddings: {list(self.x_train.columns)}')
+        task_features = list(self.x_train.columns)
+        task_features = task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]
+        logger.info(f'Features after adding embeddings: {task_features}')
 
     def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
         emb_cols = embeddings.columns
@@ -206,7 +208,10 @@ class BaseTask(ABC):
         
         self.features = [f for f in self.features if f not in emb_cols]
         self.cat_features = [f for f in self.cat_features if f not in emb_cols]
-        logger.info(f'Features after cleaning: {self.features}')
+
+        task_features = list(self.x_train.columns)
+        task_features = task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]
+        logger.info(f'Features after cleaning: {task_features}')
 
     def _load_dataset(self):
         dataset = gpd.read_file(self.dataset_path).drop_duplicates()
@@ -350,7 +355,9 @@ class MunDataTask(BaseTask):
         self.features = list(emb_df.columns)
         self.cat_features = []
 
-        logger.info(f"Features after adding embeddings: {list(self.x_train.columns)}")
+        task_features = list(self.x_train.columns)
+        task_features = task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]
+        logger.info(f'Features after adding embeddings: {task_features}')
 
     def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
 
@@ -364,7 +371,9 @@ class MunDataTask(BaseTask):
         self.cat_features = cache["cat_features"]
         self._baseline_splits_cache = None
         
-        logger.info(f"Features after clearing embeddings: {list(self.x_train.columns)}")
+        task_features = list(self.x_train.columns)
+        task_features = task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]
+        logger.info(f'Features after cleaning: {task_features}')
 
     def prepare_dataset(self) -> None:
         X, y = self._load_dataset()

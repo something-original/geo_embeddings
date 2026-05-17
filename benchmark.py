@@ -559,7 +559,8 @@ def check_tasks_performance(
         task.resplit_on_index(valid_index)
 
         logger.info('Solving baseline')
-        logger.info(f'Task features: {list(task.x_train.columns)}')
+        task_features = list(task.x_train.columns)
+        logger.info(f'Task features: {task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]}')
         y_pred_base = _predict_on_task(
             task,
             param_distributions,
