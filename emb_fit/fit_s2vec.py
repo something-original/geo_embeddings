@@ -23,7 +23,7 @@ def train_s2vec(
     model_name: str = "s2vec",
 ) -> S2VecModel:
 
-    IMG_SIZE = 128
+    IMG_SIZE = 64
     PATCH_SIZE = 16
     BATCH_SIZE = 128
     EPOCHS = 50

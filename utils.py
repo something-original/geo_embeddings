@@ -37,6 +37,8 @@ class PathBuilder:
             'val_path': os.path.join(*path_parts, 'indicator_values_val.csv'),
             'indicators_path': os.path.join(*path_parts, 'base_indicators.csv'),
             'municiplaities_path': os.path.join(*path_parts, 'municipalities.csv'),
+            'stdohods_path': os.path.join(*path_parts, 'stdohod.csv'),
+            'strashods_path': os.path.join(*path_parts, 'strashod.csv'),
             'inference_full_path': os.path.join(*path_parts, 'indicator_values_inference.csv')
         }
  
@@ -64,10 +66,10 @@ class PathBuilder:
     def build_embs_save_paths_by_dim(cls, emb_dims: list[int]) -> dict[str, dict[int, str]]:
         models_save_paths = cls.build_models_save_paths()
         base = {
-            'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs'),
-            'gnn': os.path.join(models_save_paths['deep_gnn_output_path'], 'gnn_embs'),
             'tabpfn': os.path.join(models_save_paths['tabpfn_output_path'], 'tab_pfn_embs'),
+            'gnn': os.path.join(models_save_paths['deep_gnn_output_path'], 'gnn_embs'),
             's2vec': os.path.join(models_save_paths['s2vec_output_path'], 's2vec_embs'),
+            'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs'),
         }
 
         out: dict[str, dict[int, str]] = {}

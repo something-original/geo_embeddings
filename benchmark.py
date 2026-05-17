@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from typing import Any
@@ -37,6 +38,8 @@ from emb_fit import (
     train_tabpfn,
     train_s2vec,
 )
+
+from parsers.osm_municipal import form_mun_geometry
 
 from tasks import (
     BaseTask,
@@ -120,7 +123,7 @@ def create_and_prepare_tasks(
 
     municipalities_path = emb_dataset_paths['inference_full_path']
     mun_cols = pd.read_csv(municipalities_path, sep=';', nrows=1).columns.tolist()
-    mun_features = [c for c in mun_cols if c not in ['id', 'geometry']]
+    mun_features = [c for c in mun_cols if c not in ['id', 'geometry', 'municipality_id']]
 
     for target_col in target_cols[1:]:
         tasks.append(
@@ -156,13 +159,15 @@ def create_and_prepare_tasks(
             model=model.copy(),
             cat_features=WORKPLACES_CAT_FEATURES
         )
-        
+
         tasks.extend([people_task, workplaces_task])
 
     for task in tasks:
         logger.info(f'Preparing dataset for task: {str(task)}, target: {task.target_col}')
         task.prepare_dataset()
 
+    #ДЛЯ ДЕБАГА
+    tasks = [tasks[-3]]
     return tasks
 
 
@@ -176,20 +181,22 @@ def prepare_emb_dataset(
     emb_dataset_paths = PathBuilder.build_emb_datasets_paths()
 
     target_col_names = prepare_and_save_dataset(
+        emb_dataset_paths=emb_dataset_paths,
         separate_inference=separate_inference,
-        dataset_path_old=emb_dataset_paths['dataset_path_old'],
-        dataset_path_new=emb_dataset_paths['dataset_path'],
-        indicators_path=emb_dataset_paths['indicators_path'],
         features_to_drop=features_to_drop,
         index_feature=index_feature,
         experiment_target_features=EXPERIMENT_TARGET_FEATURES,
-        train_path=emb_dataset_paths['train_path'],
-        val_path=emb_dataset_paths['val_path'],
-        inference_full_path=emb_dataset_paths['inference_full_path'],
         csv_sep=';',
         use_scaler=True,
         scaler=scaler,
         test_size=0.25,
+        use_modifications=True,
+        modification_paths=[
+            emb_dataset_paths['stdohods_path'],
+            emb_dataset_paths['strashods_path']
+        ],
+        modification_values=['Всего', 'Всего'],
+        modification_names=['stdohod', 'strashod'],
     )
 
     X_train = pd.read_csv(emb_dataset_paths['train_path'], sep=';')
@@ -347,7 +354,7 @@ def generate_embeddings(
             model=model_dict['s2vec_model'][d],
             loader=get_dataloader(
                 csv_path=emb_dataset_paths['inference_full_path'],
-                img_size=128,
+                img_size=64,
                 batch_size=128,
                 shuffle=False,
                 cols_to_drop=[index_feature] + list(target_col_names),
@@ -422,6 +429,23 @@ def bootstrap_significance(
     }
 
 
+def fit_model_and_predict(task: BaseTask) -> np.ndarray:
+    model = task.model.__class__(**task.model.get_params())
+    if model.__class__.__name__.lower().startswith("catboost"):
+        model.fit(
+            task.x_train,
+            task.y_train,
+            cat_features=task.cat_features,
+            eval_set=(task.x_val, task.y_val),
+            use_best_model=True,
+            early_stopping_rounds=100,
+            verbose=False,
+        )
+    else:
+        model.fit(task.x_train, task.y_train)
+    return model.predict(task.x_test)
+
+
 def fit_best_model_and_predict(task: BaseTask, param_distributions: dict, n_trials: int = 1) -> np.ndarray:
     import optuna
     from sklearn.metrics import root_mean_squared_error
@@ -458,7 +482,8 @@ def fit_best_model_and_predict(task: BaseTask, param_distributions: dict, n_tria
         y_pred_val = model_instance.predict(task.x_val)
         return root_mean_squared_error(task.y_val, y_pred_val)
 
-    study = optuna.create_study(direction="minimize")
+    sampler = optuna.samplers.TPESampler(seed=42)
+    study = optuna.create_study(direction="minimize", sampler=sampler)
     study.optimize(objective, n_trials=n_trials)
 
     study.best_params['random_state'] = 42
@@ -478,10 +503,23 @@ def fit_best_model_and_predict(task: BaseTask, param_distributions: dict, n_tria
     return best_model.predict(task.x_test)
 
 
+def _predict_on_task(
+    task: BaseTask,
+    param_distributions: dict,
+    *,
+    optimize_hyperparametres: bool,
+    n_trials: int = 10,
+) -> np.ndarray:
+    if optimize_hyperparametres:
+        return fit_best_model_and_predict(task, param_distributions, n_trials=n_trials)
+    return fit_model_and_predict(task)
+
+
 def check_tasks_performance(
     tasks: list[BaseTask],
     index_dict: dict,
     emb_dims: list[int],
+    optimize_hyperparametres: bool = True,
 ) -> None:
     param_distributions = {
         "learning_rate": (0.01, 0.1),
@@ -498,6 +536,10 @@ def check_tasks_performance(
     municiplaities_path = emb_dataset_paths['municiplaities_path']
 
     logger.info('----------')
+    if optimize_hyperparametres:
+        logger.info('Hyperparameter optimization: enabled (Optuna)')
+    else:
+        logger.info('Hyperparameter optimization: disabled (default model params)')
     wins: dict[tuple[str, int], int] = defaultdict(int)
 
     for task in tasks:
@@ -517,8 +559,12 @@ def check_tasks_performance(
         task.resplit_on_index(valid_index)
 
         logger.info('Solving baseline')
-        logger.info(f'Task features: {task.features}')
-        y_pred_base = fit_best_model_and_predict(task, param_distributions, n_trials=10)
+        logger.info(f'Task features: {list(task.x_train.columns)}')
+        y_pred_base = _predict_on_task(
+            task,
+            param_distributions,
+            optimize_hyperparametres=optimize_hyperparametres,
+        )
         logger.info(
             f'Baseline RMSE={_rmse(task.y_test.to_numpy(), y_pred_base):.6f}, '
             f'Corr={_pearson(task.y_test.to_numpy(), y_pred_base):.6f}'
@@ -537,15 +583,19 @@ def check_tasks_performance(
                     )
                 except FileNotFoundError:
                     logger.info(f'No combination for {model_name}, dim={d}')
-                
+
                 if embeddings is None:
                     continue
-                    
+
                 emb_shape = embeddings.drop(columns=['geometry'], errors='ignore').shape
                 logger.info(f'Embeddings dataframe shape (no geom): {emb_shape}')
 
                 task.add_embeddings(embeddings, 'geometry')
-                y_pred_new = fit_best_model_and_predict(task, param_distributions, n_trials=10)
+                y_pred_new = _predict_on_task(
+                    task,
+                    param_distributions,
+                    optimize_hyperparametres=optimize_hyperparametres,
+                )
 
                 stats = bootstrap_significance(
                     y_true=task.y_test,
@@ -694,13 +744,14 @@ def upload_best_to_hf(
         logger.warning(f"Failed to upload to HF ({HF_BEST_REPO_ID}): {e}")
 
 
-def run_experiments(
+async def run_experiments(
     model: Any,
     train_and_generate_embs: bool,
     index_feature: str,
     features_to_drop: list[str],
     emb_dims: list[int],
     separate_inference: bool,
+    optimize_hyperparametres: bool = True,
 ):
 
     logger.info('Start!')
@@ -709,13 +760,17 @@ def run_experiments(
     word = "different" if separate_inference else "similar"
     logger.info(f"Training and inference on {word} datasets")
 
+    await form_mun_geometry(
+        engine=None,
+        separate_inference=separate_inference
+    )
+
     dataset_dict, index_dict, feature_scaler, target_cols = prepare_emb_dataset(
         features_to_drop=features_to_drop,
         index_feature=index_feature,
         separate_inference=separate_inference,
     )
     tasks = create_and_prepare_tasks(model, target_cols)
-    tasks = [tasks[1]]
 
     if train_and_generate_embs:
 
@@ -740,16 +795,20 @@ def run_experiments(
         tasks=tasks,
         index_dict=index_dict,
         emb_dims=emb_dims,
+        optimize_hyperparametres=optimize_hyperparametres,
     )
 
 
 if __name__ == '__main__':
 
-    run_experiments(
-        model=CatBoostRegressor(),
-        train_and_generate_embs=True,
-        index_feature='municipality_id',
-        features_to_drop=[],
-        emb_dims=[128, 192, 256],
-        separate_inference=False,
+    asyncio.run(
+        run_experiments(
+            model=CatBoostRegressor(),
+            train_and_generate_embs=False,
+            index_feature='municipality_id',
+            features_to_drop=[],
+            emb_dims=[128, 192, 256],
+            separate_inference=False,
+            optimize_hyperparametres=False,
+        )
     )

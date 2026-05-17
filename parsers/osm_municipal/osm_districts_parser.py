@@ -45,7 +45,10 @@ async def load_mun_geometry(mun_data_geom_link, save_path):
                 f.write(await resp.read())
 
 
-async def form_mun_geometry(engine: AsyncEngine | None = None):
+async def form_mun_geometry(
+    engine: AsyncEngine | None = None,
+    separate_inference: bool = False
+):
 
     if engine is not None and await municipalities_has_geometry_column(engine):
         return
@@ -60,8 +63,13 @@ async def form_mun_geometry(engine: AsyncEngine | None = None):
     df_attrs = {'sep': ';', 'encoding': 'utf-8'}
 
     mun_districts_df = pd.read_csv(mun_districts_df_path, **df_attrs)
+
+    if engine is None and 'geometry' in mun_districts_df.columns:
+        return
+
     indicators_df = pd.read_csv(indicators_df_path, **df_attrs)
-    indicators_df_old = pd.read_csv(old_indicators_df_path, **df_attrs)
+    if separate_inference:
+        indicators_df_old = pd.read_csv(old_indicators_df_path, **df_attrs)
 
     save_folder = Path(*path_parts)
     save_path = os.path.join(*path_parts, 'mun_data_geom.rar')
@@ -114,7 +122,9 @@ async def form_mun_geometry(engine: AsyncEngine | None = None):
 
     mun_districts_df = mun_districts_df[~mun_districts_df['geometry'].isna()]
     indicators_df = indicators_df[indicators_df['municipality_id'].isin(mun_districts_df['id'])]
-    indicators_df_old = indicators_df_old[indicators_df_old['municipality_id'].isin(mun_districts_df['id'])]
+    
+    if separate_inference:
+        indicators_df_old = indicators_df_old[indicators_df_old['municipality_id'].isin(mun_districts_df['id'])]
 
     mun_districts_df = mun_districts_df.drop_duplicates(subset=['id'])
 
@@ -135,4 +145,10 @@ async def form_mun_geometry(engine: AsyncEngine | None = None):
 
     mun_districts_df.to_csv(mun_districts_df_path, index=False, **df_attrs)
     indicators_df.to_csv(indicators_df_path, index=False, **df_attrs)
-    indicators_df_old.to_csv(old_indicators_df_path, index=False, **df_attrs)
+
+    if separate_inference:
+        indicators_df_old.to_csv(old_indicators_df_path, index=False, **df_attrs)
+
+
+if __name__ == '__main__':
+    asyncio.run(form_mun_geometry(None))

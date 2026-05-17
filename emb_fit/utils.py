@@ -92,22 +92,28 @@ def get_dataloader(
 
 
 def prepare_and_save_dataset(
+    emb_dataset_paths: dict[str, str],
     separate_inference: bool,
-    dataset_path_old: str,
-    dataset_path_new: str,
-    indicators_path: str,
     features_to_drop: list[str],
     index_feature: str,
     experiment_target_features: list[str],
-    train_path: str,
-    val_path: str,
-    inference_full_path: str,
     csv_sep: str = ';',
     use_scaler: bool = False,
     scaler: StandardScaler | None = None,
     test_size: float = 0.25,
     nan_fill_threshold: float = 0.9,
+    use_modifications: bool = False,
+    modification_paths: list[str] = None,
+    modification_values: list[str] = None,
+    modification_names: list[str] = None,
 ) -> list[str]:
+
+    train_path = emb_dataset_paths['train_path']
+    val_path = emb_dataset_paths['val_path']
+    inference_full_path = emb_dataset_paths['inference_full_path']
+    dataset_path_old = emb_dataset_paths['dataset_path_old']
+    dataset_path_new = emb_dataset_paths['dataset_path']
+    indicators_path = emb_dataset_paths['indicators_path']
 
     df_new = pd.read_csv(dataset_path_new, sep=csv_sep)
 
@@ -165,25 +171,47 @@ def prepare_and_save_dataset(
         df_new = df_new.drop(columns=cols_to_drop, errors='ignore')
 
     df_base_indicators = pd.read_csv(indicators_path, sep=csv_sep)
+    if use_modifications:
+        mod_dfs = [pd.read_csv(mod_path, sep=csv_sep) for mod_path in modification_paths]
+
     target_feature_col_names: list[str] = []
 
     if experiment_target_features:
         logger.info(f'Target features: {experiment_target_features}')
         target_feature_ids = df_base_indicators[
             df_base_indicators['name'].isin(experiment_target_features)
-        ]['id']
+        ]['id'].values
 
-        for tid in target_feature_ids:
-            target_feature_col_name = f'target_{tid}'
-            target_feature_col_names.append(target_feature_col_name)
+        if use_modifications:
+            mod_ids = [
+                mod_df[mod_df['name'] == mod_value]['id'].iloc[0]
+                for mod_df, mod_value in zip(mod_dfs, modification_values)
+            ]
+
+        for i in range(0, len(target_feature_ids)):
+
+            base_col_name = f'ind{str(target_feature_ids[i])}'
+            if use_modifications:
+                target_col_name = base_col_name + f'_{modification_names[i]}{mod_ids[i]}'
+            else:
+                target_col_name = base_col_name
+
+            target_feature_col_names.append(target_col_name)
 
             if separate_inference:
-                id_cols_old = [col for col in df_old.columns if f'ind{str(tid)}' in col]
-                df_old[target_feature_col_name] = np.nansum(df_old[id_cols_old].values, axis=1)
+                id_cols_old = [col for col in df_old.columns if base_col_name in col and target_col_name not in col]
+                if df_old[target_col_name].isna().any():
+                    mask = df_old[target_col_name].isna()
+                    values_to_set = np.nansum(df_old.loc[mask, id_cols_new].values, axis=1)
+                    df_old.loc[mask, target_col_name] = values_to_set
                 df_old.drop(columns=id_cols_old, inplace=True)
 
-            id_cols_new = [col for col in df_new.columns if f'ind{str(tid)}' in col]
-            df_new[target_feature_col_name] = np.nansum(df_new[id_cols_new].values, axis=1)
+            id_cols_new = [col for col in df_new.columns if base_col_name in col and target_col_name not in col]
+            if df_new[target_col_name].isna().any():
+                mask = df_new[target_col_name].isna()
+                values_to_set = np.nansum(df_new.loc[mask, id_cols_new].values, axis=1)
+                df_new.loc[mask, target_col_name] = values_to_set
+
             df_new.drop(columns=id_cols_new, inplace=True)
     else:
         target_feature_col_names = [

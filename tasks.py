@@ -185,7 +185,7 @@ class BaseTask(ABC):
         self.x_val = self.x_val[~self.x_val.index.duplicated(keep='first')]
         self.x_test = self.x_test[~self.x_test.index.duplicated(keep='first')]
         
-        cols_to_drop = ['index_right', 'municipality_id_left', 'municipality_id_right']
+        cols_to_drop = ['index_left', 'index_right', 'municipality_id', 'municipality_id_left', 'municipality_id_right']
         self.x_train.drop(columns=cols_to_drop, inplace=True, errors='ignore')
         self.x_val.drop(columns=cols_to_drop, inplace=True, errors='ignore')
         self.x_test.drop(columns=cols_to_drop, inplace=True, errors='ignore')
@@ -195,7 +195,7 @@ class BaseTask(ABC):
         self.features.extend(list(emb_col_set))
 
         self._drop_cols([self.geom_col])
-        logger.info(f'Features after adding embddings: {self.features}')
+        logger.info(f'Features after adding embddings: {list(self.x_train.columns)}')
 
     def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
         emb_cols = embeddings.columns
@@ -209,7 +209,7 @@ class BaseTask(ABC):
         logger.info(f'Features after cleaning: {self.features}')
 
     def _load_dataset(self):
-        dataset = gpd.read_file(self.dataset_path)
+        dataset = gpd.read_file(self.dataset_path).drop_duplicates()
         if isinstance(dataset[self.geom_col].iloc[0], str):
             dataset[self.geom_col] = dataset[self.geom_col].apply(wkt.loads)
 
@@ -289,9 +289,15 @@ class WorkplacesDistrictsTask(BaseTask):
 
 class MunDataTask(BaseTask):
     task_name = "MunDataTask"
-    
+    index_col = "municipality_id"
+
     def _load_dataset(self):
         mun_df = pd.read_csv(self.dataset_path, sep=';', encoding='utf-8')
+        if self.index_col not in mun_df.columns:
+            raise ValueError(
+                f"{self.index_col} column is required in {self.dataset_path}"
+            )
+        mun_df = mun_df.set_index(self.index_col)
 
         X = mun_df[self.features].copy()
         X = X.drop(columns=self.features_to_drop, errors='ignore')
@@ -321,9 +327,21 @@ class MunDataTask(BaseTask):
                 "cat_features": list(self.cat_features),
             }
 
-        emb_df = embeddings.drop(columns=[emb_geom_col], errors="ignore")
+        emb_df = embeddings.drop(columns=[emb_geom_col, self.index_col], errors="ignore")
         if emb_df.index.has_duplicates:
             emb_df = emb_df[~emb_df.index.duplicated(keep="first")]
+
+        for name, split_index in (
+            ("train", self.x_train.index),
+            ("val", self.x_val.index),
+            ("test", self.x_test.index),
+        ):
+            missing = split_index.difference(emb_df.index)
+            if len(missing):
+                raise KeyError(
+                    f"Embeddings missing for {len(missing)} {self.index_col} "
+                    f"values in {name} split (e.g. {missing[:5].tolist()})"
+                )
 
         self.x_train = emb_df.loc[self.x_train.index].copy()
         self.x_val = emb_df.loc[self.x_val.index].copy()
@@ -331,6 +349,8 @@ class MunDataTask(BaseTask):
 
         self.features = list(emb_df.columns)
         self.cat_features = []
+
+        logger.info(f"Features after adding embeddings: {list(self.x_train.columns)}")
 
     def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
 
@@ -343,14 +363,16 @@ class MunDataTask(BaseTask):
         self.features = cache["features"]
         self.cat_features = cache["cat_features"]
         self._baseline_splits_cache = None
+        
+        logger.info(f"Features after clearing embeddings: {list(self.x_train.columns)}")
 
     def prepare_dataset(self) -> None:
         X, y = self._load_dataset()
-        
+
         not_nan_index = y[~y.isna()].index
         X = X[X.index.isin(not_nan_index)]
         y = y[y.index.isin(not_nan_index)]
-        
+
         self._X_full = X.copy()
         self._y_full = y.copy()
 
@@ -360,7 +382,7 @@ class MunDataTask(BaseTask):
             "val": self.x_val.index.copy(),
             "test": self.x_test.index.copy(),
         }
-        
+
         self.features = [f for f in self.features if f not in self.features_to_drop]
 
     def resplit_on_index(self, row_index: pd.Index | list) -> None:
