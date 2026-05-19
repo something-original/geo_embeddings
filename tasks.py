@@ -302,6 +302,7 @@ class MunDataTask(BaseTask):
             raise ValueError(
                 f"{self.index_col} column is required in {self.dataset_path}"
             )
+        mun_df[self.index_col] = pd.to_numeric(mun_df[self.index_col], errors="raise").astype("int64")
         mun_df = mun_df.set_index(self.index_col)
 
         X = mun_df[self.features].copy()

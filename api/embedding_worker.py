@@ -35,7 +35,7 @@ def _cleanup_local_artifacts() -> None:
             except OSError as e:
                 logger.warning("Could not remove %s: %s", p, e)
 
-    for model_dir in ("gnn", "tab_pfn", "s2vec", "satclip"):
+    for model_dir in ("gnn", "tab_pfn", "s2vec", "satclip", "pca"):
         root = Path(__file__).resolve().parents[1] / "emb_fit" / model_dir
         if not root.is_dir():
             continue

@@ -28,8 +28,10 @@ from config import (
 )
 
 from emb_fit import (
+    fit_pca,
     get_dataloader,
     get_gnn_embeddings,
+    get_pca_embeddings,
     get_tabpfn_embeddings,
     get_s2vec_embeddings,
     get_satclip_embeddings,
@@ -166,8 +168,6 @@ def create_and_prepare_tasks(
         logger.info(f'Preparing dataset for task: {str(task)}, target: {task.target_col}')
         task.prepare_dataset()
 
-    #ДЛЯ ДЕБАГА
-    tasks = [tasks[-3]]
     return tasks
 
 
@@ -306,6 +306,15 @@ def train_embedding_models(
         )
         model_dict['s2vec_model'][d] = s2vec_model
 
+    model_dict['pca_model'] = {}
+    model_dict['pca_imputer'] = {}
+    for d in emb_dims:
+        logger.info('----------')
+        logger.info(f'Fitting PCA (emb_dim={d})')
+        pca_model, pca_imputer = fit_pca(X_train=X_train, n_components=d)
+        model_dict['pca_model'][d] = pca_model
+        model_dict['pca_imputer'][d] = pca_imputer
+
     return model_dict
 
 
@@ -376,6 +385,17 @@ def generate_embeddings(
             device=DEVICE,
             checkpoint_filename='satclip-resnet18-l40.ckpt',
             output_path=emb_save_paths['satclip'][d],
+            output_dim=d,
+        )
+
+    for d in emb_dims:
+        logger.info('----------')
+        logger.info(f'Getting PCA embeddings (emb_dim={d})')
+        get_pca_embeddings(
+            pca=model_dict['pca_model'][d],
+            imputer=model_dict['pca_imputer'][d],
+            X=dataset_dict['X'],
+            embs_save_path=emb_save_paths['pca'][d],
             output_dim=d,
         )
 

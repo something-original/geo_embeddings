@@ -36,14 +36,16 @@ from config import (
     QDRANT_PORT,
 )
 from emb_fit import (
+    fit_pca,
     get_dataloader,
     get_gnn_embeddings,
+    get_pca_embeddings,
     get_s2vec_embeddings,
     get_satclip_embeddings,
     get_tabpfn_embeddings,
 )
 from emb_fit.models import DeepGNN, S2VecModel
-from utils import PathBuilder, prepare_mun_df
+from utils import PathBuilder, get_geometry_points
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,7 @@ EMBEDDING_GENERATORS: dict[str, Callable[..., Any]] = {
     "tabpfn": get_tabpfn_embeddings,
     "s2vec": get_s2vec_embeddings,
     "satclip": get_satclip_embeddings,
+    "pca": get_pca_embeddings,
 }
 
 
@@ -144,25 +147,6 @@ def _resolve_emb_npy_path(summary: dict) -> Path | None:
         shutil.copy2(downloaded, expected)
         return expected
     return None
-
-
-def _centroids_lat_lon_ordered(index_series: pd.Series, municipalities_path: str) -> list[tuple[float, float]]:
-
-    df = prepare_mun_df(municipalities_path, "geometry")
-    df["id"] = df["id"].apply(int)
-    id_to_xy: dict[int, tuple[float, float]] = {}
-    for row in df.itertuples(index=False):
-        geom = getattr(row, "geometry", None)
-        rid = int(getattr(row, "id"))
-        if geom is not None and rid is not None:
-            c = geom.centroid
-            id_to_xy[rid] = (float(c.y), float(c.x))
-    out: list[tuple[float, float]] = []
-    for mid in index_series.astype(int).tolist():
-        if int(mid) not in id_to_xy:
-            raise KeyError(f"No geometry for municipality_id={mid}")
-        out.append(id_to_xy[int(mid)])
-    return out
 
 
 def _inference_municipality_ids() -> np.ndarray:
@@ -298,9 +282,21 @@ def _generate_best_embeddings_npy(summary: dict) -> Path:
             embs_save_path=str(out_path),
             device=DEVICE,
         )
+    elif best == "pca":
+        pca_model, pca_imputer = fit_pca(
+            X_train=dataset_dict["X_train"],
+            n_components=emb_dim,
+        )
+        get_pca_embeddings(
+            pca=pca_model,
+            imputer=pca_imputer,
+            X=dataset_dict["X"],
+            embs_save_path=str(out_path),
+            output_dim=emb_dim,
+        )
     else:  # satclip
         mun_path = PathBuilder.build_emb_datasets_paths()["municiplaities_path"]
-        coords = _centroids_lat_lon_ordered(index_dict["full_index"], mun_path)
+        coords = get_geometry_points(index_dict["full_index"], str(mun_path))
         get_satclip_embeddings(
             coordinates=coords,
             device=DEVICE,
