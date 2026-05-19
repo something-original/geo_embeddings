@@ -32,14 +32,16 @@ class PathBuilder:
         
         return {
             'dataset_path': os.path.join(*path_parts, 'indicator_values.csv'),
+            'dataset_path_old': os.path.join(*path_parts, 'indicator_values_old.csv'),
             'train_path': os.path.join(*path_parts, 'indicator_values_train.csv'),
             'val_path': os.path.join(*path_parts, 'indicator_values_val.csv'),
-            'train_full_path': os.path.join(*path_parts, 'indicator_values_full.csv'),
             'indicators_path': os.path.join(*path_parts, 'base_indicators.csv'),
             'municiplaities_path': os.path.join(*path_parts, 'municipalities.csv'),
+            'stdohods_path': os.path.join(*path_parts, 'stdohod.csv'),
+            'strashods_path': os.path.join(*path_parts, 'strashod.csv'),
+            'inference_full_path': os.path.join(*path_parts, 'indicator_values_inference.csv')
         }
-
-    
+ 
     @classmethod
     def build_models_save_paths(cls) -> dict:
         path_parts = [cls.root_dir, 'emb_fit']
@@ -48,6 +50,7 @@ class PathBuilder:
             'tabpfn_output_path': os.path.join(*path_parts, 'tab_pfn'),
             's2vec_output_path': os.path.join(*path_parts, 's2vec'),
             'satclip_output_path': os.path.join(*path_parts, 'satclip'),
+            'pca_output_path': os.path.join(*path_parts, 'pca'),
         }
 
     @classmethod
@@ -58,27 +61,25 @@ class PathBuilder:
             'tabpfn': os.path.join(models_save_paths['tabpfn_output_path'], 'tab_pfn_embs.npy'),
             's2vec': os.path.join(models_save_paths['s2vec_output_path'], 's2vec_embs.npy'),
             'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs.npy'),
+            'pca': os.path.join(models_save_paths['pca_output_path'], 'pca_embs.npy'),
         }
 
     @classmethod
     def build_embs_save_paths_by_dim(cls, emb_dims: list[int]) -> dict[str, dict[int, str]]:
-        """
-        Build per-model embedding output paths for multiple embedding dimensions.
-
-        File naming convention: *_embs_{dim}.npy
-        """
         models_save_paths = cls.build_models_save_paths()
         base = {
-            'gnn': os.path.join(models_save_paths['deep_gnn_output_path'], 'gnn_embs'),
             'tabpfn': os.path.join(models_save_paths['tabpfn_output_path'], 'tab_pfn_embs'),
+            'gnn': os.path.join(models_save_paths['deep_gnn_output_path'], 'gnn_embs'),
             's2vec': os.path.join(models_save_paths['s2vec_output_path'], 's2vec_embs'),
             'satclip': os.path.join(models_save_paths['satclip_output_path'], 'satclip_embs'),
+            'pca': os.path.join(models_save_paths['pca_output_path'], 'pca_embs'),
         }
 
         out: dict[str, dict[int, str]] = {}
         for model_name, prefix in base.items():
             out[model_name] = {d: f"{prefix}_{d}.npy" for d in emb_dims}
         return out
+
 
 def prepare_mun_df(
     mun_dataset_path: str,
@@ -91,21 +92,30 @@ def prepare_mun_df(
     df = gpd.GeoDataFrame(df).set_geometry(geom_col).set_crs('EPSG:4326')
     df['id'] = df['id'].apply(int)
 
-    return df
-    
+    return df 
+
 
 def get_geometry_points(
     index_col: pd.Series,
     dataset_path: str,
     geom_col: str = 'geometry'
 ) -> list[tuple[float, float]]:
-
+    """Centroids (lat, lon) in the same order as index_col (row i -> index_col[i])."""
     df = prepare_mun_df(dataset_path, geom_col)
-    df['id'] = df['id'].apply(int)
-    df = df[df['id'].isin(index_col.values)]
-    df['centroids'] = df[geom_col].centroid
-    
-    return df['centroids'].apply(lambda p: (p.y, p.x)).tolist()
+    df['id'] = df['id'].astype(int)
+    df = df.set_index('id')
+
+    ordered_ids = index_col.astype(int).tolist()
+    missing = set(ordered_ids) - set(df.index)
+    if missing:
+        sample = sorted(missing)[:5]
+        raise ValueError(
+            f"Missing geometry for {len(missing)} municipalities "
+            f"(e.g. ids {sample}) in {dataset_path}"
+        )
+
+    centroids = df.loc[ordered_ids, geom_col].centroid
+    return [(float(p.y), float(p.x)) for p in centroids]
 
 
 def load_embeddings(
@@ -126,7 +136,7 @@ def load_embeddings(
             f"Make sure you generate embeddings on the same CSV/order as index_col and with shuffle=False."
         )
         return
-    embeddings[index_col_name] = index_col.to_numpy()
+    embeddings[index_col_name] = index_col.astype(np.int64).to_numpy()
     
     mun_df = prepare_mun_df(municipality_path, geom_col)
     mun_df = mun_df[['id', geom_col]]

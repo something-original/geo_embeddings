@@ -1,24 +1,32 @@
-import os
-import pandas as pd
-import numpy as np
+import logging
+import pickle
 from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from sklearn.decomposition import PCA
+from sklearn.metrics import root_mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
 from tabpfn import TabPFNRegressor
 from tqdm import tqdm
-import pickle
-from typing import Any
-from sklearn.decomposition import PCA
+
+logger = logging.getLogger(__name__)
 
 
 def train_tabpfn(
     X_train,
     y_train,
+    X_val,
+    y_val,
     output_path: str = "emb_fit/tabpfn_model.pkl",
     max_train_samples: int = 10000,
     ignore_pretraining_limits: bool = True,
     columns_to_drop: list = None,
     device: str = "cuda",
-    random_state: int = 42
+    random_state: int = 42,
+    embed_dims: list[int] | None = None,
+    model_name: str = "tabpfn",
 ):
     """
     Обучает TabPFN модель и сохраняет её.
@@ -41,10 +49,17 @@ def train_tabpfn(
         X_train = pd.DataFrame(X_train)
     if isinstance(y_train, np.ndarray):
         y_train = pd.Series(y_train)
+    if isinstance(X_val, np.ndarray):
+        X_val = pd.DataFrame(X_val)
+    if isinstance(y_val, np.ndarray):
+        y_val = np.asarray(y_val)
+    else:
+        y_val = y_val.values
 
     # Удаляем указанные колонки
     if columns_to_drop:
         X_train = X_train.drop(columns=[col for col in columns_to_drop if col in X_train.columns], errors='ignore')
+        X_val = X_val.drop(columns=[col for col in columns_to_drop if col in X_val.columns], errors='ignore')
 
     # Ограничиваем размер обучающей выборки
     if len(X_train) > max_train_samples:
@@ -72,9 +87,11 @@ def train_tabpfn(
     model.fit(X_train, y_train_scaled)
     print("Обучение завершено")
 
-    # Сохраняем модель и scaler
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    y_pred_s = model.predict(X_val)
+    y_pred_log = target_scaler.inverse_transform(np.asarray(y_pred_s).reshape(-1, 1)).flatten()
+    y_pred = np.power(10.0, y_pred_log) - 1.0
+    rmse = root_mean_squared_error(y_val, y_pred)
+    logger.info(f"Metric for model {model_name}, RMSE: {rmse}")
 
     save_dict = {
         'model': model,
@@ -83,11 +100,17 @@ def train_tabpfn(
         'max_train_samples': max_train_samples
     }
 
-    output_path = os.path.join(output_path, 'tabpfn.pkl')
-    with open(output_path, 'wb') as f:
-        pickle.dump(save_dict, f)
+    dims = embed_dims if embed_dims else [128]
+    root = Path(__file__).resolve().parent / "checkpoints"
+    for d in dims:
+        stem = f"{model_name}_{d}"
+        ck_dir = root / model_name / stem
+        ck_dir.mkdir(parents=True, exist_ok=True)
+        ck_file = ck_dir / f"{stem}.pkl"
+        with open(ck_file, 'wb') as f:
+            pickle.dump(save_dict, f)
 
-    print(f"Модель сохранена: {output_path}")
+    print(f"Модель сохранена: checkpoints/{model_name}/...")
 
     return model, target_scaler
 

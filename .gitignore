@@ -19,6 +19,9 @@ __MACOSX/
 *.ckpt
 checkpoints/
 *.pkl
+lightning_logs/
+.cursor/
+.env.example
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -146,6 +149,9 @@ celerybeat.pid
 
 # Environments
 .env
+secrets/*
+!secrets/.gitkeep
+!secrets/README
 .venv
 env/
 venv/

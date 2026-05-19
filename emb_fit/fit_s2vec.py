@@ -1,11 +1,16 @@
-from .utils import get_dataloader
-from .models import S2VecModel
+import logging
+from pathlib import Path
 
 import numpy as np
 import torch
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from torch.utils.data import DataLoader
+
+from .utils import get_dataloader
+from .models import S2VecModel
+
+logger = logging.getLogger(__name__)
 
 
 def train_s2vec(
@@ -14,10 +19,11 @@ def train_s2vec(
     checkpoint_path: str,
     device: str,
     embed_dim: int = 256,
-    cols_to_drop: list[str] | None = None
+    cols_to_drop: list[str] | None = None,
+    model_name: str = "s2vec",
 ) -> S2VecModel:
 
-    IMG_SIZE = 128
+    IMG_SIZE = 64
     PATCH_SIZE = 16
     BATCH_SIZE = 128
     EPOCHS = 50
@@ -85,6 +91,21 @@ def train_s2vec(
         val_dataloaders=val_loader
     )
 
+    val_out = trainer.validate(model, dataloaders=val_loader, verbose=False)
+    d0 = val_out[0]
+    vkey = next((k for k in d0 if k.startswith("validation")), next(iter(d0)))
+    t = d0[vkey]
+    v = float(t.detach().cpu().item() if hasattr(t, "detach") else t)
+    logger.info(f"Metric for model {model_name}, {vkey}: {v}")
+
+    stem = f"{model_name}_{embed_dim}"
+    ck_dir = Path(__file__).resolve().parent / "checkpoints" / model_name / stem
+    ck_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {"state_dict": model.state_dict(), "embed_dim": embed_dim},
+        ck_dir / f"{stem}.pt",
+    )
+
     return model
 
 
@@ -104,7 +125,7 @@ def get_s2vec_embeddings(
             imgs, _ = batch
             imgs = imgs.to(device)
 
-            latent, _, _ = model.encode(imgs)
+            latent, _, _ = model.encode(imgs, mask_inputs=False)
             cls_embeddings = latent[:, 0, :]
 
             embeddings_list.append(cls_embeddings.cpu().numpy())

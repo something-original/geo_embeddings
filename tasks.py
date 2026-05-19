@@ -6,15 +6,11 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 from sklearn.model_selection import train_test_split
-import optuna
-from sklearn.metrics import root_mean_squared_error, mean_absolute_error, r2_score
-from scipy.stats import pearsonr
 
 from pathlib import Path
 import os
 from shapely import Polygon, wkt
 
-from utils import PathBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +29,7 @@ class BaseTask(ABC):
         dataset_link: str | None = None,
         dataset_crs: str = "EPSG:4326",
         cat_features: list[str] = [],
+        features_to_drop: list[str] = [],
     ):
         super().__init__()
         self.dataset_link = dataset_link
@@ -61,7 +58,7 @@ class BaseTask(ABC):
         self._y_full: pd.Series | None = None
 
         self._initial_split_index: dict[str, pd.Index] | None = None
-
+        self.features_to_drop = features_to_drop
 
     def __str__(self) -> str:
         return self.task_name
@@ -188,7 +185,7 @@ class BaseTask(ABC):
         self.x_val = self.x_val[~self.x_val.index.duplicated(keep='first')]
         self.x_test = self.x_test[~self.x_test.index.duplicated(keep='first')]
         
-        cols_to_drop = ['index_right', 'municipality_id_left', 'municipality_id_right']
+        cols_to_drop = ['index_left', 'index_right', 'municipality_id', 'municipality_id_left', 'municipality_id_right']
         self.x_train.drop(columns=cols_to_drop, inplace=True, errors='ignore')
         self.x_val.drop(columns=cols_to_drop, inplace=True, errors='ignore')
         self.x_test.drop(columns=cols_to_drop, inplace=True, errors='ignore')
@@ -198,7 +195,9 @@ class BaseTask(ABC):
         self.features.extend(list(emb_col_set))
 
         self._drop_cols([self.geom_col])
-        logger.info(f'Features after adding embddings: {self.features}')
+        task_features = list(self.x_train.columns)
+        task_features = task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]
+        logger.info(f'Features after adding embeddings: {task_features}')
 
     def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
         emb_cols = embeddings.columns
@@ -209,10 +208,13 @@ class BaseTask(ABC):
         
         self.features = [f for f in self.features if f not in emb_cols]
         self.cat_features = [f for f in self.cat_features if f not in emb_cols]
-        logger.info(f'Features after cleaning: {self.features}')
+
+        task_features = list(self.x_train.columns)
+        task_features = task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]
+        logger.info(f'Features after cleaning: {task_features}')
 
     def _load_dataset(self):
-        dataset = gpd.read_file(self.dataset_path)
+        dataset = gpd.read_file(self.dataset_path).drop_duplicates()
         if isinstance(dataset[self.geom_col].iloc[0], str):
             dataset[self.geom_col] = dataset[self.geom_col].apply(wkt.loads)
 
@@ -292,30 +294,20 @@ class WorkplacesDistrictsTask(BaseTask):
 
 class MunDataTask(BaseTask):
     task_name = "MunDataTask"
-    
+    index_col = "municipality_id"
+
     def _load_dataset(self):
         mun_df = pd.read_csv(self.dataset_path, sep=';', encoding='utf-8')
-        if self.geom_col in mun_df.columns and isinstance(mun_df[self.geom_col].iloc[0], str):
-            mun_df[self.geom_col] = mun_df[self.geom_col].apply(wkt.loads)
+        if self.index_col not in mun_df.columns:
+            raise ValueError(
+                f"{self.index_col} column is required in {self.dataset_path}"
+            )
+        mun_df[self.index_col] = pd.to_numeric(mun_df[self.index_col], errors="raise").astype("int64")
+        mun_df = mun_df.set_index(self.index_col)
 
-        mun_gdf = gpd.GeoDataFrame(mun_df).set_geometry(self.geom_col).set_crs(self.dataset_crs).to_crs(self.crs)
-
-        emb_paths = PathBuilder.build_emb_datasets_paths()
-        indicators_full = pd.read_csv(emb_paths['train_full_path'], sep=';', encoding='utf-8')
-
-        targets = indicators_full[['municipality_id', self.target_col]].copy()
-
-        merged = mun_gdf.merge(targets, how='inner', left_on='id', right_on='municipality_id')
-        merged = merged.set_index('municipality_id', drop=True)
-
-        for c in self.features:
-            if c not in merged.columns:
-                continue
-            if merged[c].dtype == 'object':
-                merged[c] = pd.factorize(merged[c])[0].astype('int32')
-
-        X = merged[self.features + [self.geom_col]].copy()
-        y = merged[self.target_col].copy()
+        X = mun_df[self.features].copy()
+        X = X.drop(columns=self.features_to_drop, errors='ignore')
+        y = mun_df[self.target_col].copy()
 
         return X, y
 
@@ -341,9 +333,21 @@ class MunDataTask(BaseTask):
                 "cat_features": list(self.cat_features),
             }
 
-        emb_df = embeddings.drop(columns=[emb_geom_col], errors="ignore")
+        emb_df = embeddings.drop(columns=[emb_geom_col, self.index_col], errors="ignore")
         if emb_df.index.has_duplicates:
             emb_df = emb_df[~emb_df.index.duplicated(keep="first")]
+
+        for name, split_index in (
+            ("train", self.x_train.index),
+            ("val", self.x_val.index),
+            ("test", self.x_test.index),
+        ):
+            missing = split_index.difference(emb_df.index)
+            if len(missing):
+                raise KeyError(
+                    f"Embeddings missing for {len(missing)} {self.index_col} "
+                    f"values in {name} split (e.g. {missing[:5].tolist()})"
+                )
 
         self.x_train = emb_df.loc[self.x_train.index].copy()
         self.x_val = emb_df.loc[self.x_val.index].copy()
@@ -351,6 +355,10 @@ class MunDataTask(BaseTask):
 
         self.features = list(emb_df.columns)
         self.cat_features = []
+
+        task_features = list(self.x_train.columns)
+        task_features = task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]
+        logger.info(f'Features after adding embeddings: {task_features}')
 
     def clear_embeddings(self, embeddings: gpd.GeoDataFrame):
 
@@ -363,3 +371,53 @@ class MunDataTask(BaseTask):
         self.features = cache["features"]
         self.cat_features = cache["cat_features"]
         self._baseline_splits_cache = None
+        
+        task_features = list(self.x_train.columns)
+        task_features = task_features if len(task_features) <= 256 else task_features[:10] + ['...'] + task_features[-10:]
+        logger.info(f'Features after cleaning: {task_features}')
+
+    def prepare_dataset(self) -> None:
+        X, y = self._load_dataset()
+
+        not_nan_index = y[~y.isna()].index
+        X = X[X.index.isin(not_nan_index)]
+        y = y[y.index.isin(not_nan_index)]
+
+        self._X_full = X.copy()
+        self._y_full = y.copy()
+
+        self._set_splits_from_xy(X, y)
+        self._initial_split_index = {
+            "train": self.x_train.index.copy(),
+            "val": self.x_val.index.copy(),
+            "test": self.x_test.index.copy(),
+        }
+
+        self.features = [f for f in self.features if f not in self.features_to_drop]
+
+    def resplit_on_index(self, row_index: pd.Index | list) -> None:
+        """
+        Rebuild train/val/test on a subset of the full dataset (used to align
+        baseline splits with rows that have embeddings).
+        """
+        if self._X_full is None or self._y_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+
+        X = self._X_full.loc[row_index]
+        y = self._y_full.loc[row_index]
+        self._set_splits_from_xy(X, y)
+
+    def reset_splits(self) -> None:
+        if self._X_full is None or self._y_full is None:
+            raise RuntimeError("Dataset is not prepared. Call prepare_dataset() first.")
+        if not self._initial_split_index:
+            raise RuntimeError("Initial split cache is missing.")
+
+        X = self._X_full
+        y = self._y_full
+        self.x_train = X.loc[self._initial_split_index["train"]]
+        self.y_train = y.loc[self._initial_split_index["train"]]
+        self.x_val = X.loc[self._initial_split_index["val"]]
+        self.y_val = y.loc[self._initial_split_index["val"]]
+        self.x_test = X.loc[self._initial_split_index["test"]]
+        self.y_test = y.loc[self._initial_split_index["test"]]

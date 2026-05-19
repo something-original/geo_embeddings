@@ -35,3 +35,26 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 BENCHMARK_LOG_PATH = "logs/models_tasks_performance.log"
 
 os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
+
+HOST = os.getenv('HOST', '0.0.0.0')
+PORT = int(os.getenv('PORT', '1414'))
+
+DB_HOST = os.getenv('DB_HOST', '127.0.0.1')
+DB_PORT = os.getenv('DB_PORT', '1212')
+DB_NAME = os.getenv('DB_NAME', 'geo_embeddings')
+DB_USER = os.getenv('DB_USER', 'georgiykiselev')
+DB_PWD = os.getenv('DB_PWD', 'georgiykiselev')
+
+DB_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PWD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+QDRANT_HOST = os.getenv("QDRANT_HOST", "127.0.0.1")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "municipality_embeddings")
+QDRANT_HTTPS = (os.getenv("QDRANT_HTTPS") or "false").lower() == "true"
+
+# true: parse_mun_data + form_mun_geometry + Qdrant sync on startup; false: wait for API uploads
+INIT_EMBEDDINGS = (os.getenv("INIT_EMBEDDINGS") or "true").lower() == "true"
+
+# Path to 7z/p7zip binary (Docker: /usr/bin/7z); empty = search PATH
+SEVEN_ZIP_BIN = os.getenv("SEVEN_ZIP_BIN") or os.getenv("SEVENZIP_BIN") or ""
