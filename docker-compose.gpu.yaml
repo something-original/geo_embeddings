@@ -1,0 +1,16 @@
+# GPU overlay: docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up --build
+# Requires NVIDIA Container Toolkit and a GPU on the host.
+
+services:
+  app:
+    build:
+      target: runtime-gpu
+    environment:
+      DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

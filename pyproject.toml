@@ -3,18 +3,15 @@ name = "geo-embeddings"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Georgiy Kiselev",email = "gsx2002@yandex.ru"}
+    {name = "Georgiy Kiselev", email = "gsx2002@yandex.ru"}
 ]
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
+
 dependencies = [
-    "torch-geometric (>=2.7.0,<3.0.0)",
     "catboost (>=1.2.8,<2.0.0)",
     "pandas (>=2.3.3,<3.0.0)",
     "scikit-learn (==1.6.1)",
-    "torch (>=2.9.0,<3.0.0)",
-    "ipython (>=9.6.0,<10.0.0)",
-    "ipykernel (>=7.0.1,<8.0.0)",
     "gdown (>=5.2.0,<6.0.0)",
     "category-encoders (>=2.9.0,<3.0.0)",
     "seaborn (>=0.13.2,<0.14.0)",
@@ -26,12 +23,8 @@ dependencies = [
     "shapely (>=2.1.2,<3.0.0)",
     "pyproj (>=3.7.2,<4.0.0)",
     "retrying (>=1.4.2,<2.0.0)",
-    "cianparser (>=1.0.4,<2.0.0)",
     "google (>=3.0.0,<4.0.0)",
-    "pyrosm (>=0.6.2,<0.7.0)",
-    "osmnx (>=2.0.6,<3.0.0)",
     "contextily (>=1.6.2,<2.0.0)",
-    "torchvision (>=0.20.0,<1.0.0)",
     "Pillow (>=10.0.0,<11.0.0)",
     "transformers (>=4.30.0,<5.0.0)",
     "lightning (>=2.0.0,<3.0.0)",
@@ -58,8 +51,8 @@ dependencies = [
     "qdrant-client (==1.12.1)",
     "python-dotenv (>=1.0.0,<2.0.0)",
     "geopandas (>=1.0.0,<2.0.0)",
+    "torch-geometric (>=2.7.0,<3.0.0)",
 ]
-
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -67,6 +60,12 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.15"
-torch = { url = "https://download.pytorch.org/whl/nightly/cu128/torch-2.10.0.dev20251118%2Bcu128-cp312-cp312-win_amd64.whl" }
-torchvision = { url = "https://download.pytorch.org/whl/nightly/cu128/torchvision-0.25.0.dev20251117%2Bcu128-cp312-cp312-win_amd64.whl" }
-torchaudio = { url = "https://download.pytorch.org/whl/nightly/cu128/torchaudio-2.10.0.dev20251116%2Bcu128-cp312-cp312-win_amd64.whl" }
+
+[tool.poetry.group.cpu.dependencies]
+torch = { version = ">=2.9.0,<3.0.0", source = "pytorch-cpu" }
+torchvision = { version = ">=0.20.0,<1.0.0", source = "pytorch-cpu" }
+
+[[tool.poetry.source]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
