@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal-dev \
     libgeos-dev \
     libproj-dev \
+    libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir --break-system-packages "poetry==${POETRY_VERSION}"
@@ -45,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal32 \
     libgeos-c1v5 \
     libproj25 \
+    libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/7z /usr/local/bin/7z
 
@@ -56,8 +58,7 @@ COPY docker/entrypoint.sh ./docker/entrypoint.sh
 COPY api/ ./api/
 COPY emb_fit/ ./emb_fit/
 COPY parsers/ ./parsers/
-COPY datasets/ ./datasets/
-COPY app.py config.py embedding_qdrant.py utils.py ./
+COPY app.py config.py embedding_qdrant.py utils.py benchmark.py tasks.py ./
 
 RUN chmod +x /app/docker/entrypoint.sh \
     && mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
@@ -90,6 +91,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdal-dev \
     libgeos-dev \
     libproj-dev \
+    libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/7z /usr/local/bin/7z
 
@@ -105,8 +107,7 @@ COPY docker/entrypoint.sh ./docker/entrypoint.sh
 COPY api/ ./api/
 COPY emb_fit/ ./emb_fit/
 COPY parsers/ ./parsers/
-COPY datasets/ ./datasets/
-COPY app.py config.py embedding_qdrant.py utils.py ./
+COPY app.py config.py embedding_qdrant.py utils.py benchmark.py tasks.py ./
 
 RUN chmod +x /app/docker/entrypoint.sh \
     && mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints

@@ -392,10 +392,12 @@ def ensure_inference_embeddings_qdrant() -> None:
         return
 
     summary = _load_summary_hf_or_local()
+
     if summary is None or "best_model" not in summary or "emb_dim" not in summary:
         logger.info("No best_embedding_summary; running full experiments pipeline.")
         _run_full_experiments_pipeline()
         summary = _load_summary_local()
+
         if summary is None:
             summary = _load_summary_hf_or_local()
         if summary is None:
@@ -410,6 +412,7 @@ def ensure_inference_embeddings_qdrant() -> None:
     emb_path = _resolve_emb_npy_path(summary)
     if emb_path is None:
         logger.info("Embedding npy missing; trying regeneration from HF/local checkpoints.")
+    
         try:
             emb_path = _generate_best_embeddings_npy(summary)
         except Exception as e:
