@@ -56,6 +56,7 @@ COPY api/ ./api/
 COPY emb_fit/ ./emb_fit/
 COPY parsers/ ./parsers/
 COPY app.py config.py embedding_qdrant.py utils.py benchmark.py tasks.py ./
+COPY datasets/mun_datasets_metadata.csv ./datasets/mun_datasets_metadata.csv
 
 RUN chmod +x /app/entrypoint.sh \
     && mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
@@ -102,6 +103,7 @@ COPY api/ ./api/
 COPY emb_fit/ ./emb_fit/
 COPY parsers/ ./parsers/
 COPY app.py config.py embedding_qdrant.py utils.py benchmark.py tasks.py ./
+COPY datasets/mun_datasets_metadata.csv ./datasets/mun_datasets_metadata.csv
 
 RUN chmod +x /app/entrypoint.sh \
     && mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
