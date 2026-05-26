@@ -34,9 +34,6 @@ FROM python:3.12-slim-bookworm AS runtime-cpu
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    SEVEN_ZIP_BIN=/usr/bin/7z \
-    HOST=0.0.0.0 \
-    PORT=1414 \
     PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -54,17 +51,17 @@ COPY --from=builder-cpu /usr/local/lib/python3.12/site-packages /usr/local/lib/p
 COPY --from=builder-cpu /usr/local/bin /usr/local/bin
 
 WORKDIR /app
-COPY docker/entrypoint.sh ./docker/entrypoint.sh
+COPY docker/entrypoint.sh ./entrypoint.sh
 COPY api/ ./api/
 COPY emb_fit/ ./emb_fit/
 COPY parsers/ ./parsers/
 COPY app.py config.py embedding_qdrant.py utils.py benchmark.py tasks.py ./
 
-RUN chmod +x /app/docker/entrypoint.sh \
+RUN chmod +x /app/entrypoint.sh \
     && mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
 
-ENTRYPOINT ["/app/docker/entrypoint.sh"]
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "1414"]
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD []
 
 
 # ---------------------------------------------------------------------------
@@ -78,9 +75,6 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_VERSION=2.1.4 \
     POETRY_VIRTUALENVS_CREATE=false \
     POETRY_NO_INTERACTION=1 \
-    SEVEN_ZIP_BIN=/usr/bin/7z \
-    HOST=0.0.0.0 \
-    PORT=1414 \
     PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -103,14 +97,14 @@ COPY pyproject.toml .
 
 RUN poetry install --only main --no-root --no-ansi
 
-COPY docker/entrypoint.sh ./docker/entrypoint.sh
+COPY entrypoint.sh ./entrypoint.sh
 COPY api/ ./api/
 COPY emb_fit/ ./emb_fit/
 COPY parsers/ ./parsers/
 COPY app.py config.py embedding_qdrant.py utils.py benchmark.py tasks.py ./
 
-RUN chmod +x /app/docker/entrypoint.sh \
+RUN chmod +x /app/entrypoint.sh \
     && mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
 
-ENTRYPOINT ["/app/docker/entrypoint.sh"]
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "1414"]
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD []

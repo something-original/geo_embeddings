@@ -12,7 +12,6 @@ env
 .env
 secrets
 *.md
-!api.md
 logs
 outputs
 catboost_info
@@ -31,4 +30,12 @@ emb_fit/checkpoints
 **/*.png
 *.ps1
 TODO
-docker-compose.override.yaml
+.mypy_cache
+emb_fit/gnn
+emb_fit/pca
+emb_fit/s2vec
+emb_fit/satclip
+emb_fit/tab_pfn
+
+emb_fit/models/satclip/*
+!emb_fit/models/satclip/satclip
