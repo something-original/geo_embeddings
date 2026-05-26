@@ -31,7 +31,11 @@ EXPERIMENT_TARGET_FEATURES = [
     'Расходы местного бюджета, фактически исполненные'
 ]
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+_device_env = (os.getenv("DEVICE") or "").strip().lower()
+if _device_env in ("cuda", "cpu"):
+    DEVICE = _device_env
+else:
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BENCHMARK_LOG_PATH = "logs/models_tasks_performance.log"
 
 os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
@@ -53,8 +57,5 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "municipality_embeddings")
 QDRANT_HTTPS = (os.getenv("QDRANT_HTTPS") or "false").lower() == "true"
 
-# true: parse_mun_data + form_mun_geometry + Qdrant sync on startup; false: wait for API uploads
 INIT_EMBEDDINGS = (os.getenv("INIT_EMBEDDINGS") or "true").lower() == "true"
-
-# Path to 7z/p7zip binary (Docker: /usr/bin/7z); empty = search PATH
 SEVEN_ZIP_BIN = os.getenv("SEVEN_ZIP_BIN") or os.getenv("SEVENZIP_BIN") or ""

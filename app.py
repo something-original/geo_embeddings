@@ -4,25 +4,47 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 import numpy as np
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    status
+)
+
 from pydantic import BaseModel, ConfigDict, Field
 from parsers.osm_municipal import parse_mun_data, form_mun_geometry
 from shapely import make_valid
 from shapely.geometry import shape
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine
+)
+
 import uvicorn
 
-from config import DB_URL, HOST, INIT_EMBEDDINGS, PORT, QDRANT_COLLECTION
+from config import (
+    DB_URL,
+    HOST,
+    INIT_EMBEDDINGS,
+    PORT,
+    QDRANT_COLLECTION
+)
+
 from api.routes import (
     register_dataset_routes,
     register_embedding_routes,
     register_stats_routes,
 )
-from embedding_qdrant import ensure_inference_embeddings_qdrant_async, make_qdrant_client
+from embedding_qdrant import (
+    ensure_inference_embeddings_qdrant_async,
+    make_qdrant_client,
+)
 from utils import setup_logging
 
 
@@ -47,7 +69,9 @@ async def lifespan(app: FastAPI):
     try:
         if INIT_EMBEDDINGS:
             root_dir = Path(__file__).resolve().parent
-            logger.info("INIT_EMBEDDINGS=true: loading default municipal datasets into DB")
+            logger.info(
+                "INIT_EMBEDDINGS=true: loading default municipal datasets into DB"
+            )
             await parse_mun_data(root_dir, engine)
             await form_mun_geometry(engine)
             await ensure_inference_embeddings_qdrant_async()
@@ -66,6 +90,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down")
     await engine.dispose()
 
+
 app = FastAPI(lifespan=lifespan)
 
 embedding_router = APIRouter(prefix="/embeddings")
@@ -78,7 +103,9 @@ def _geojson_geometry_from_body(body: dict[str, Any]) -> dict[str, Any]:
     if t == "Feature":
         g = body.get("geometry")
         if not isinstance(g, dict):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Feature.geometry must be an object")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Feature.geometry must be an object"
+            )
         return g
     if isinstance(t, str):
         return body
@@ -101,7 +128,9 @@ class FromPolygonResponse(BaseModel):
     municipality_ids: list[int]
     vectors_b64: str
     geojson: dict[str, Any]
-    vectors_encoding: Literal["float32_le_rowmajor_base64"] = "float32_le_rowmajor_base64"
+    vectors_encoding: Literal["float32_le_rowmajor_base64"] = (
+        "float32_le_rowmajor_base64"
+    )
     missing_embedding_ids: list[int] = Field(default_factory=list)
 
 
@@ -145,7 +174,9 @@ async def embeddings_from_polygon(
     try:
         g = shape(geom)
     except Exception as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid GeoJSON geometry: {e}") from e
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"Invalid GeoJSON geometry: {e}"
+        ) from e
     if g.is_empty:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty geometry")
     if not g.is_valid:
@@ -244,5 +275,5 @@ app.include_router(datasets_router)
 app.include_router(stats_router)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     uvicorn.run(app, host=HOST, port=PORT)

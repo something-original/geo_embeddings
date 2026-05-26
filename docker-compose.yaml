@@ -1,3 +1,11 @@
+secrets:
+  db_password:
+    environment: DB_PASSWORD
+  hf_token:
+    environment: HF_TOKEN
+  qdrant_api_key:
+    environment: QDRANT_API_KEY
+
 services:
   db:
     image: postgis/postgis:16-3.4
@@ -35,6 +43,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime-cpu
     restart: unless-stopped
     depends_on:
       db:
@@ -51,33 +60,24 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_PORT: "6333"
       INIT_EMBEDDINGS: ${INIT_EMBEDDINGS:-true}
+      DEVICE: ${DEVICE:-cpu}
       SEVEN_ZIP_BIN: /usr/bin/7z
       HOST: 0.0.0.0
     secrets:
       - db_password
       - hf_token
-      - qdrant_api_key
+
     volumes:
-      - app_datasets:/app/datasets/mun_data
-      - app_uploads:/app/datasets/uploads
+      - app_datasets:/app/datasets
       - app_logs:/app/logs
       - app_checkpoints:/app/emb_fit/checkpoints
     networks:
       - geo_net
 
-secrets:
-  db_password:
-    file: ./secrets/db_password
-  hf_token:
-    file: ./secrets/hf_token
-  qdrant_api_key:
-    file: ./secrets/qdrant_api_key
-
 volumes:
   pgdata:
   qdrant_data:
   app_datasets:
-  app_uploads:
   app_logs:
   app_checkpoints:
 
