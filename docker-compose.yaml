@@ -68,7 +68,7 @@ services:
       - hf_token
 
     volumes:
-      - app_datasets:/app/datasets
+      - ./datasets:/app/datasets
       - app_logs:/app/logs
       - app_checkpoints:/app/emb_fit/checkpoints
     networks:
@@ -77,7 +77,6 @@ services:
 volumes:
   pgdata:
   qdrant_data:
-  app_datasets:
   app_logs:
   app_checkpoints:
 

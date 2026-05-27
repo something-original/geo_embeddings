@@ -51,18 +51,18 @@ COPY --from=builder-cpu /usr/local/lib/python3.12/site-packages /usr/local/lib/p
 COPY --from=builder-cpu /usr/local/bin /usr/local/bin
 
 WORKDIR /app
-COPY docker/entrypoint.sh ./entrypoint.sh
+COPY entrypoint.sh ./entrypoint.sh
 COPY api/ ./api/
 COPY emb_fit/ ./emb_fit/
 COPY parsers/ ./parsers/
 COPY app.py config.py embedding_qdrant.py utils.py benchmark.py tasks.py ./
-COPY datasets/mun_datasets_metadata.csv ./datasets/mun_datasets_metadata.csv
 
-RUN chmod +x /app/entrypoint.sh \
-    && mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
+RUN mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
+COPY datasets/mun_datasets_metadata.csv ./datasets/
 
+RUN chmod +x /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD []
+CMD ["python", "app.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -103,10 +103,11 @@ COPY api/ ./api/
 COPY emb_fit/ ./emb_fit/
 COPY parsers/ ./parsers/
 COPY app.py config.py embedding_qdrant.py utils.py benchmark.py tasks.py ./
-COPY datasets/mun_datasets_metadata.csv ./datasets/mun_datasets_metadata.csv
 
-RUN chmod +x /app/entrypoint.sh \
-    && mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
+RUN mkdir -p datasets/mun_data datasets/uploads logs emb_fit/checkpoints
+COPY datasets/mun_datasets_metadata.csv ./datasets/
+
+RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD []
+CMD ["python", "app.py"]
