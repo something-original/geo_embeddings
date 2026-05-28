@@ -14,7 +14,6 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    curl \
     gdal-bin \
     libgdal-dev \
     libgeos-dev \
@@ -37,15 +36,12 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    p7zip-full \
-    curl \
     gdal-bin \
     libgdal32 \
     libgeos-c1v5 \
     libproj25 \
     libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/7z /usr/local/bin/7z
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder-cpu /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder-cpu /usr/local/bin /usr/local/bin
@@ -79,16 +75,13 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    p7zip-full \
-    curl \
     build-essential \
     gdal-bin \
     libgdal-dev \
     libgeos-dev \
     libproj-dev \
     libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/7z /usr/local/bin/7z
+    && rm -rf /var/lib/apt/lists/*
 
 
 RUN pip install --no-cache-dir --break-system-packages "poetry==${POETRY_VERSION}"

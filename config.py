@@ -16,8 +16,7 @@ HF_BEST_PATH_IN_REPO = os.getenv('HF_BEST_PATH_IN_REPO') or 'main'
 os.environ.setdefault('HF_HUB_DISABLE_TELEMETRY', '1')
 
 TOCHNO_ST_BASE_LINK = os.getenv('TOCHNO_ST_BASE_LINK') or 'https://storage.yandexcloud.net/tochno-st-catalog/Rosstat/data_bdmo_118_v20250918/indicators/section<section_id>/data_Y4<dataset_code>_112_v20250918.zip'
-OVERPASS_API_LINK = os.getenv('OVERPASS_API_LINK') or 'https://overpass.openstreetmap.fr/api/'
-MUN_GEOMS_LINK = os.getenv('MUN_GEOMS_LINK') or 'https://s.sber.ru/GthXk7'
+MUN_GEOMS_LINK = os.getenv('MUN_GEOMS_LINK') or 'https://downloader.disk.yandex.ru/disk/f1759b4f680533ade9936b664b33d774141e57625b4e593c467e6e6fc3ac274c/6a18efd4/DMMYV1dENCl7Exq5oXEdXagvA-PdsaDUsC4u4UZXxH0vghTsly1iSWxGvKvo_h8oQ87c418STMLuXTtg_RxwVw%3D%3D?uid=0&filename=t_dict_municipal.zip&disposition=attachment&hash=NUETVyj7iPjeWEcS5/MtcNeP1mI0F%2BlVG45MxwcZaDFnOjswUZ5vmQptq9OF4QJQq/J6bpmRyOJonT3VoXnDag%3D%3D&limit=0&content_type=application%2Fzip&owner_uid=421343728&fsize=52943185&hid=5a9e0314a1c94873538ef06c26acb57c&media_type=compressed&tknv=v3&is_direct_zip_experiment=1'
 FLATS_TASK_LINK = os.getenv('FLATS_TASK_LINK') or 'https://raw.githubusercontent.com/mishannn/cianparser/main/offers.json'
 
 CHECK_PEOPLE_WORKPLACES_TASKS = (os.getenv('CHECK_PEOPLE_WORKPLACES_TASKS') or 'false') == 'true'

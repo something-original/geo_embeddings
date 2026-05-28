@@ -1,6 +1,6 @@
 secrets:
   db_password:
-    environment: DB_PASSWORD
+    environment: DB_PWD
   hf_token:
     environment: HF_TOKEN
   qdrant_api_key:
@@ -10,10 +10,12 @@ services:
   db:
     image: postgis/postgis:16-3.4
     restart: unless-stopped
+    ports:
+      - "1212:5432"
     environment:
-      POSTGRES_DB: ${DB_NAME:-geo_embeddings}
-      POSTGRES_USER: ${DB_USER:-georgiykiselev}
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PWD}
     secrets:
       - db_password
     volumes:
@@ -22,7 +24,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${DB_USER:-georgiykiselev} -d ${DB_NAME:-geo_embeddings}",
+          "pg_isready -U ${DB_USER} -d ${DB_NAME}",
         ]
       interval: 5s
       timeout: 5s
@@ -34,6 +36,8 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.12.1
     restart: unless-stopped
+    ports:
+      - "1313:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
@@ -51,7 +55,7 @@ services:
       qdrant:
         condition: service_started
     ports:
-      - "${PORT:-1414}:1414"
+      - "${PORT}:1414"
     env_file:
       - .env
     environment:
