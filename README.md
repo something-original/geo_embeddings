@@ -8,3 +8,5 @@
 
     Значение по умолчанию:\
     https://storage.yandexcloud.net/tochno-st-catalog/Rosstat/data_bdmo_118_v20250918/indicators/section<section_id>/data_Y4<dataset_code>_112_v20250918.zip
+
+.
