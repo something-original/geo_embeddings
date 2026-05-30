@@ -3,10 +3,11 @@ import aiohttp
 import os
 import pandas as pd
 import geopandas as gpd
+import logging 
 
 from pathlib import Path
 import shutil
-import subprocess
+import zipfile
 
 from config import MUN_GEOMS_LINK, SEVEN_ZIP_BIN
 
@@ -16,6 +17,8 @@ import certifi
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .db import municipalities_has_geometry_column, sync_municipalities_geometry_postgis
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_seven_zip_bin() -> str:
@@ -72,19 +75,28 @@ async def form_mun_geometry(
         indicators_df_old = pd.read_csv(old_indicators_df_path, **df_attrs)
 
     save_folder = Path(*path_parts)
-    save_path = os.path.join(*path_parts, 'mun_data_geom.rar')
+    save_path = os.path.join(*path_parts, 'mun_data_geom.zip')
 
     if not Path(save_path).exists():
         await load_mun_geometry(MUN_GEOMS_LINK, save_path)
 
     files_before = set(save_folder.rglob('*'))
-    seven_zip = resolve_seven_zip_bin()
-    unpack_cmd = [seven_zip, "x", save_path, f"-o{save_folder}", "-y"]
-    result = subprocess.run(unpack_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"7z failed (exit {result.returncode}): {result.stderr.decode(errors='replace')}"
-        )
+
+    logger.info(f'Unpacking {save_path} to {save_folder}')
+
+    try:
+        save_folder_path = Path(save_folder)
+        save_folder_path.mkdir(parents=True, exist_ok=True)
+
+        with zipfile.ZipFile(save_path, 'r') as zip_ref:
+            zip_ref.extractall(path=save_folder_path)
+
+        logger.info(f'Successfully unpacked {save_path}')
+
+    except zipfile.BadZipFile as e:
+        raise RuntimeError(f"Invalid zip file {save_path}: {e}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to unpack {save_path}: {e}")
 
     os.remove(save_path)
     files_after = set(save_folder.rglob('*'))

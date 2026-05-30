@@ -18,7 +18,6 @@ catboost_info
 lightning_logs
 checkpoints
 emb_fit/checkpoints
-**/*.csv
 **/*.npy
 **/*.pt
 **/*.pkl

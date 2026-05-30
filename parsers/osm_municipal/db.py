@@ -1,6 +1,6 @@
 import asyncio
 import math
-import re
+
 from pathlib import Path
 
 import polars as pl
@@ -8,7 +8,12 @@ from sqlalchemy import Boolean, Float, Integer, String, Text, column, insert, ta
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-_SKIP_TOKENS = frozenset({"full", "inference", "val", "train"})
+
+SAVE_TO_DB = {
+    "municipalities",
+    "regions"
+}
+
 _INDICATOR_STEMS = frozenset({
     "indicator_values",
     "indicator_values_old",
@@ -19,12 +24,6 @@ _INDICATOR_STEMS = frozenset({
 
 def _qi(ident: str) -> str:
     return '"' + ident.replace('"', '""') + '"'
-
-
-def _should_skip_stem(stem: str) -> bool:
-    tokens = re.split(r"[^a-zA-Z0-9]+", stem.lower())
-    tokens = [t for t in tokens if t]
-    return bool(_SKIP_TOKENS.intersection(tokens))
 
 
 def _infer_column_sql_types(
@@ -288,7 +287,7 @@ async def load_mun_csvs_to_database(engine: AsyncEngine, folder_path: Path) -> N
     tasks: list[asyncio.Task] = []
     for path in paths:
         stem = path.stem
-        if _should_skip_stem(stem):
+        if stem not in SAVE_TO_DB:
             continue
 
         async def _one(p: Path = path) -> None:

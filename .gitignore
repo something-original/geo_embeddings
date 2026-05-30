@@ -9,6 +9,7 @@ logs/
 outputs/
 TODO
 *.csv
+!mun_datasets_metadata.csv
 *.npy
 *.pt
 *.zip
