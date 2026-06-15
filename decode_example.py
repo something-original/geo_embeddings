@@ -20,12 +20,10 @@ request_polygon = {
     "properties": None,
 }
 
-geo_embeddings = requests.post(GEO_EMBEDDINGS_URL, data=request_polygon)
+
+geo_embeddings = requests.post(GEO_EMBEDDINGS_URL, json=request_polygon)
+
 json_answer = geo_embeddings.json()
-
-b64 = json_answer["vectors_b64"]
-d_type = json_answer["data_type"]
-shape = json_answer["shape"]
-
-raw_bytes = base64.b64decode(b64)
-arr = np.frombuffer(raw_bytes, dtype=d_type).reshape(shape)
+raw_bytes = base64.b64decode(json_answer['vectors_b64'])
+all_numbers = np.frombuffer(raw_bytes, dtype='<f4')
+vectors_matrix = all_numbers.reshape(-1, json_answer['dim'])
