@@ -4,8 +4,6 @@
 
 Является развитием проекта https://github.com/InfinitasFish/geo_embeddings
 
-
-
 Для запуска сервиса на устройстве с GPU выполните следующую команду:
 
 ```docker compose -f docker-compose.gpu.yaml -f docker-compose.yaml up -d --build```
@@ -48,4 +46,3 @@
 
 - Если указана переменная `CHECK_PEOPLE_WORKPLACES_TASKS=true`, то переменные `PEOPLE_FEATURES`,
 `PEOPLE_CAT_FEATURES`, `WORKPLACES_FEATURES`, `WORKPLACES_CAT_FEATURES` также должны быть заполнены. Они необходимы для тестирования на коммерческих датасетах и предоставляются по запросу, сервис способен функционировать без них.
-
