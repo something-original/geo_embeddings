@@ -466,7 +466,7 @@ def fit_model_and_predict(task: BaseTask) -> np.ndarray:
     return model.predict(task.x_test)
 
 
-def fit_best_model_and_predict(task: BaseTask, param_distributions: dict, n_trials: int = 1) -> np.ndarray:
+def fit_best_model_and_predict(task: BaseTask, param_distributions: dict, n_trials: int = 1, model_name: str ='') -> np.ndarray:
     import optuna
     from sklearn.metrics import root_mean_squared_error
 
@@ -520,6 +520,11 @@ def fit_best_model_and_predict(task: BaseTask, param_distributions: dict, n_tria
         )
     else:
         best_model.fit(task.x_train, task.y_train)
+
+    if str(task) in {"Workplaces prediction", "Population prediction"}:
+        if model_name == 'tabpfn128':
+            best_model.save_model(f'{str(task).replace(' ', '_')}.cbm', format='cbm')
+
     return best_model.predict(task.x_test)
 
 
@@ -529,9 +534,10 @@ def _predict_on_task(
     *,
     optimize_hyperparametres: bool,
     n_trials: int = 10,
+    model_name: str = ''
 ) -> np.ndarray:
     if optimize_hyperparametres:
-        return fit_best_model_and_predict(task, param_distributions, n_trials=n_trials)
+        return fit_best_model_and_predict(task, param_distributions, n_trials=n_trials, model_name=model_name)
     return fit_model_and_predict(task)
 
 
@@ -540,6 +546,7 @@ def check_tasks_performance(
     index_dict: dict,
     emb_dims: list[int],
     optimize_hyperparametres: bool = True,
+    push_to_hf: bool = False,
 ) -> None:
     param_distributions = {
         "learning_rate": (0.01, 0.1),
@@ -584,7 +591,7 @@ def check_tasks_performance(
         y_pred_base = _predict_on_task(
             task,
             param_distributions,
-            optimize_hyperparametres=optimize_hyperparametres,
+            optimize_hyperparametres=optimize_hyperparametres
         )
         logger.info(
             f'Baseline RMSE={_rmse(task.y_test.to_numpy(), y_pred_base):.6f}, '
@@ -616,6 +623,7 @@ def check_tasks_performance(
                     task,
                     param_distributions,
                     optimize_hyperparametres=optimize_hyperparametres,
+                    model_name=model_name + str(d)
                 )
 
                 stats = bootstrap_significance(
@@ -653,11 +661,12 @@ def check_tasks_performance(
         logger.info("BEST (model, dim) by #tasks with significant improvement (RMSE↓ & Corr↑):")
         logger.info(f"Best model: {best_pair[0]}, emb_dim: {best_pair[1]}, wins: {wins[best_pair]}")
         logger.info("==========")
-        upload_best_to_hf(
-            best_pair=best_pair,
-            wins=wins,
-            emb_save_paths=emb_save_paths,
-        )
+        if push_to_hf:
+            upload_best_to_hf(
+                best_pair=best_pair,
+                wins=wins,
+                emb_save_paths=emb_save_paths,
+            )
 
 
 def checkpoint_model_path(model_name: str, emb_dim: int) -> Path | None:
@@ -773,6 +782,7 @@ async def run_experiments(
     emb_dims: list[int],
     separate_inference: bool,
     optimize_hyperparametres: bool = True,
+    push_to_hf: bool = False,
 ):
 
     logger.info('Start!')
@@ -791,7 +801,7 @@ async def run_experiments(
         index_feature=index_feature,
         separate_inference=separate_inference,
     )
-    tasks = create_and_prepare_tasks(model, target_cols)
+    tasks = create_and_prepare_tasks(model, target_cols)[-2:]
 
     if train_and_generate_embs:
 
@@ -817,6 +827,7 @@ async def run_experiments(
         index_dict=index_dict,
         emb_dims=emb_dims,
         optimize_hyperparametres=optimize_hyperparametres,
+        push_to_hf=push_to_hf,
     )
 
 
@@ -830,6 +841,7 @@ if __name__ == '__main__':
             features_to_drop=[],
             emb_dims=[128, 192, 256],
             separate_inference=False,
-            optimize_hyperparametres=False,
+            optimize_hyperparametres=True,
+            push_to_hf=False,
         )
     )
