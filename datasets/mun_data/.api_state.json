@@ -1,0 +1,8 @@
+{
+  "territories_uploaded": true,
+  "target_column": "people",
+  "target_indicator_ids": [],
+  "last_upload_job": "running",
+  "last_embedding_job": null,
+  "same_file_inference": false
+}

@@ -215,92 +215,66 @@ async def _process_upload_feature_values(
     if target_col and target_col not in all_feature_names:
         all_feature_names.append(target_col)
 
-    engine = create_async_engine(url=DB_URL)
+    mun_index_col = params.get('index_col', None)
+    if not mun_index_col:
+        mun_index_col = "id"
+        inf_df = inf_df.with_row_index(mun_index_col)
+        train_df = train_df.with_row_index(mun_index_col)
+
+    inf_ids = inf_df[mun_index_col].to_list()
+    name_to_id = {n: i + 1 for i, n in enumerate(all_feature_names)}
+
+    inf_df = rename_feature_columns(inf_df, mun_index_col, target_col, name_to_id)
+    train_df = rename_feature_columns(train_df, mun_index_col, target_col, name_to_id)
+
+    update_state(
+        target_column=target_col,
+        target_indicator_ids=[],
+        same_file_inference=same_file,
+        territories_uploaded=territories_ready,
+    )
+
     try:
-        name_to_id = await load_indicators(engine, all_feature_names)
+        engine = create_async_engine(url=DB_URL)
+        await filter_municipalities_by_ids(engine, inf_ids)
 
-        train_wide = rename_feature_columns(
-            train_df.select(["municipality_id"] + feature_names_train),
-            "municipality_id",
-            target_col,
-            name_to_id,
-        )
-        inf_wide = rename_feature_columns(
-            inf_df.select(["municipality_id"] + feature_names_inf),
-            "municipality_id",
-            target_col if same_file else None,
-            name_to_id,
-        )
-
-        if same_file:
-            await load_indicator_values_table(engine, "indicator_values_inference", inf_wide)
-        else:
-            await load_indicator_values_table(engine, "indicator_values_train", train_wide)
-            await load_indicator_values_table(engine, "indicator_values_inference", inf_wide)
-            inf_ids = inf_wide["municipality_id"].to_list()
-            await filter_municipalities_by_ids(engine, inf_ids)
-
-        target_ids = [name_to_id[target_col]] if target_col and target_col in name_to_id else []
-        update_state(
-            target_column=target_col,
-            target_indicator_ids=target_ids,
-            same_file_inference=same_file,
-            territories_uploaded=territories_ready,
-        )
     finally:
         await engine.dispose()
 
     paths = PathBuilder.build_emb_datasets_paths()
     mun_dir = Path(paths["dataset_path"]).parent
 
-    if same_file:
-        _save_local_csv(inf_wide, Path(paths["inference_full_path"]))
-        _save_local_csv(inf_wide, Path(paths["dataset_path"]))
-        indicator_names = [c for c in inf_wide.columns if c.startswith(("ind_", "target_"))]
-        pl.DataFrame(
-            {"id": list(name_to_id.values()), "name": list(name_to_id.keys())}
-        ).write_csv(Path(paths["indicators_path"]), separator=CSV_SEP)
+    emb_paths = {
+        "dataset_path_old": str(paths["dataset_path_old"]),
+        "dataset_path": str(paths["inference_full_path"]),
+        "indicators_path": str(paths["indicators_path"]),
+        "train_path": str(paths["train_path"]),
+        "val_path": str(paths["val_path"]),
+        "inference_full_path": str(paths["inference_full_path"])
+    }
 
-        prepare_and_save_dataset(
-            separate_inference=False,
-            dataset_path_old=str(paths["dataset_path"]),
-            dataset_path_new=str(paths["inference_full_path"]),
-            indicators_path=str(paths["indicators_path"]),
-            features_to_drop=[],
-            index_feature="municipality_id",
-            experiment_target_features=[],
-            train_path=paths["train_path"],
-            val_path=paths["val_path"],
-            inference_full_path=paths["inference_full_path"],
-            csv_sep=CSV_SEP,
-            use_scaler=True,
-            scaler=StandardScaler(),
-        )
-    else:
-        _save_local_csv(train_wide, mun_dir / "indicator_values_old.csv")
-        _save_local_csv(inf_wide, Path(paths["dataset_path"]))
-        _save_local_csv(inf_wide, Path(paths["inference_full_path"]))
-        pl.DataFrame(
-            {"id": list(name_to_id.values()), "name": list(name_to_id.keys())}
-        ).write_csv(Path(paths["indicators_path"]), separator=CSV_SEP)
+    pl.DataFrame(
+        {"id": list(name_to_id.values()), "name": list(name_to_id.keys())}
+    ).write_csv(Path(paths["indicators_path"]), separator=CSV_SEP)
 
-        prepare_and_save_dataset(
-            separate_inference=True,
-            dataset_path_old=str(mun_dir / "indicator_values_old.csv"),
-            dataset_path_new=str(paths["dataset_path"]),
-            indicators_path=str(paths["indicators_path"]),
-            features_to_drop=[],
-            index_feature="municipality_id",
-            experiment_target_features=[],
-            train_path=paths["train_path"],
-            val_path=paths["val_path"],
-            inference_full_path=paths["inference_full_path"],
-            csv_sep=CSV_SEP,
-            use_scaler=True,
-            scaler=StandardScaler(),
-        )
+    _save_local_csv(inf_df, Path(paths["inference_full_path"]))
+    _save_local_csv(inf_df, Path(paths["dataset_path"]))    
 
-    logger.info("upload_feature_values complete (same_file_inference=%s)", same_file)
+    if not same_file:
+        _save_local_csv(train_df, mun_dir / "indicator_values_old.csv")
+
+    prepare_and_save_dataset(
+        emb_dataset_paths=emb_paths,
+        separate_inference=not same_file,
+        features_to_drop=[],
+        index_feature=mun_index_col,
+        experiment_target_features=[],
+        csv_sep=CSV_SEP,
+        use_scaler=True,
+        scaler=StandardScaler(),
+    )
+
+    logger.info(f"upload_feature_values complete (same_file_inference={same_file})")
 
 
 def run_upload_territories(csv_path: str, params: dict[str, Any]) -> None:
