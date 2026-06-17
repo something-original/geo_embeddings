@@ -179,8 +179,7 @@ def rename_feature_columns(
         else:
             renames[col] = f"ind_{ind_id}"
     out = df.rename(renames)
-    if id_col != "municipality_id":
-        out = out.rename({id_col: "municipality_id"})
+
     return out
 
 
